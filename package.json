@@ -1,0 +1,23 @@
+{
+  "name": "hypovy-muzon-bot",
+  "version": "1.0.0",
+  "description": "Discord-бот с единой музыкальной библиотекой «Хайповый музон»",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "deploy-commands": "node src/deploy-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "@discordjs/voice": "^0.19.2",
+    "@discordjs/opus": "^0.9.0",
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "libsodium-wrappers": "^0.7.15",
+    "winston": "^3.14.2"
+  }
+}

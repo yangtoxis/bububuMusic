@@ -1,0 +1,278 @@
+import { EventEmitter } from 'node:events';
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  entersState,
+  AudioPlayerStatus,
+  VoiceConnectionStatus,
+  NoSubscriberBehavior,
+  StreamType,
+} from '@discordjs/voice';
+import fs from 'node:fs';
+import { LocalFileSource } from '../sources/LocalFileSource.js';
+import { pickNextTrack, normalizeArtist } from '../library/TrackSelector.js';
+import { GuildSettingsRepo } from '../database/GuildSettingsRepo.js';
+import { recordPlay, getRecentlyPlayed } from './recentlyPlayed.js';
+import { createLogger } from '../utils/logger.js';
+
+export const QUEUE_LOOKAHEAD = 5;
+const HISTORY_SIZE = 8;
+const RECENT_ARTIST_WINDOW = 2;
+const MAX_CONSECUTIVE_FAILURES = 5;
+const PLAYED_STACK_SIZE = 20;
+
+export class AudioSession extends EventEmitter {
+  constructor({ guild, voiceChannel, textChannel }) {
+    super();
+    this.guild = guild;
+    this.voiceChannel = voiceChannel;
+    this.textChannel = textChannel;
+
+    this.currentTrack = null;
+    this.trackStartedAt = null;
+    this.upcoming = []; // materialized queue of the next tracks, always kept topped up
+    this.playedStack = []; // full track objects, most-recent last - powers "previous"
+    // Seeded from what actually played last time this guild had a session,
+    // so a fresh /play right after /stop doesn't immediately replay it.
+    this._history = getRecentlyPlayed(guild.id).slice(); // most recent first: { id, artist }
+    this._consecutiveFailures = 0;
+    this._destroyed = false;
+    this._source = null;
+
+    this.volume = GuildSettingsRepo.get(guild.id).volume;
+
+    this.logger = createLogger({ module: 'AudioSession', guildId: guild.id });
+
+    this.connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: guild.id,
+      adapterCreator: guild.voiceAdapterCreator,
+      selfDeaf: true,
+    });
+
+    this.player = createAudioPlayer({
+      behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
+    });
+    this.connection.subscribe(this.player);
+
+    this._wireConnection();
+    this._wirePlayer();
+  }
+
+  _wireConnection() {
+    this.connection.on('stateChange', (oldState, newState) => {
+      this.logger.debug('voice connection stateChange', { from: oldState.status, to: newState.status });
+    });
+
+    this.connection.on(VoiceConnectionStatus.Disconnected, async () => {
+      try {
+        await Promise.race([
+          entersState(this.connection, VoiceConnectionStatus.Signalling, 5_000),
+          entersState(this.connection, VoiceConnectionStatus.Connecting, 5_000),
+        ]);
+      } catch {
+        if (!this._destroyed) this.destroy('voice_disconnected');
+      }
+    });
+
+    this.connection.on('error', (err) => {
+      this.logger.error('voice connection error', { error: err.message });
+    });
+  }
+
+  _wirePlayer() {
+    this.player.on(AudioPlayerStatus.Playing, () => {
+      this._consecutiveFailures = 0;
+    });
+
+    this.player.on(AudioPlayerStatus.Idle, () => {
+      if (this._destroyed) return;
+      this._advance().catch((err) => this.logger.error('advance failed', { error: err.message }));
+    });
+
+    this.player.on('error', (err) => {
+      this.logger.warn('audio player error', { error: err.message, trackId: this.currentTrack?.id });
+      if (this._destroyed) return;
+      this._consecutiveFailures += 1;
+      this.emit('trackError', { track: this.currentTrack, reason: err.message });
+      this._advance().catch((e) => this.logger.error('advance after error failed', { error: e.message }));
+    });
+  }
+
+  async start() {
+    await entersState(this.connection, VoiceConnectionStatus.Ready, 20_000);
+    this._fillQueue();
+    await this._advance();
+  }
+
+  _fillQueue() {
+    while (this.upcoming.length < QUEUE_LOOKAHEAD) {
+      // Exclude the last few actually-played tracks (persists across a
+      // /stop + /play cycle, see recentlyPlayed.js) plus whatever's already
+      // queued. Ordered with the most immediate one (currentTrack) last -
+      // pickNextTrack's small-library fallback relaxes older exclusions
+      // first and keeps protecting the most recent one the longest.
+      const historyIds = this._history.map((h) => h.id);
+      const excludeTrackIds = [...historyIds, ...this.upcoming.map((t) => t.id), this.currentTrack?.id].filter(
+        Boolean
+      );
+      // Only look at the artist(s) immediately preceding the slot being
+      // filled - either the tail of what's already queued, or actual play
+      // history if the queue is still empty. Using the *whole* queue built
+      // so far instead of just its tail self-defeats once every artist in
+      // a small library is already represented in it (the filter would
+      // exclude everything and fall back to no filter at all, right at the
+      // position most likely to land a same-artist repeat).
+      const recentArtists =
+        this.upcoming.length > 0
+          ? this.upcoming.slice(-RECENT_ARTIST_WINDOW).map((t) => normalizeArtist(t.artist))
+          : this._history.slice(0, RECENT_ARTIST_WINDOW).map((h) => h.artist);
+      const pick = pickNextTrack({ excludeTrackIds, recentArtists });
+      if (!pick) break; // library empty or exhausted
+      this.upcoming.push(pick);
+    }
+  }
+
+  async _advance() {
+    if (this._destroyed) return;
+
+    if (this._consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      this.emit('error', 'Слишком много треков подряд не удалось воспроизвести. Останавливаюсь.');
+      this.destroy('too_many_failures');
+      return;
+    }
+
+    if (this.upcoming.length === 0) this._fillQueue();
+    const next = this.upcoming.shift();
+
+    if (!next) {
+      this.currentTrack = null;
+      this.emit('empty');
+      this.destroy('library_empty');
+      return;
+    }
+
+    if (!next.file_path || !fs.existsSync(next.file_path)) {
+      this.logger.warn('track file missing on disk, skipping', { trackId: next.id, filePath: next.file_path });
+      this._consecutiveFailures += 1;
+      this._recordHistory(next);
+      await this._advance();
+      return;
+    }
+
+    this._playTrack(next);
+    this._fillQueue(); // top the queue back up, now correctly excluding the new currentTrack
+  }
+
+  _playTrack(track, { pushPrevious = true } = {}) {
+    if (this._source) this._source.destroy();
+
+    if (pushPrevious && this.currentTrack) {
+      this.playedStack.push(this.currentTrack);
+      if (this.playedStack.length > PLAYED_STACK_SIZE) this.playedStack.shift();
+    }
+
+    this.currentTrack = track;
+    this.trackStartedAt = Date.now();
+    this._recordHistory(track);
+
+    this._source = new LocalFileSource(track);
+    const stream = this._source.createStream();
+    const resource = createAudioResource(stream, {
+      inputType: StreamType.Raw,
+      inlineVolume: true,
+    });
+    resource.volume?.setVolume(this.volume / 100);
+    this._resource = resource;
+
+    this.player.play(resource);
+    this.emit('trackChange', track);
+  }
+
+  _recordHistory(track) {
+    this._history.unshift({ id: track.id, artist: normalizeArtist(track.artist) });
+    if (this._history.length > HISTORY_SIZE) this._history.length = HISTORY_SIZE;
+    recordPlay(this.guild.id, track);
+  }
+
+  skip() {
+    if (this._destroyed) return;
+    // Idle handler advances into the already-materialized queue, so the
+    // track that just stopped can't be immediately reselected.
+    this.player.stop(true);
+  }
+
+  previous() {
+    if (this._destroyed) return false;
+    const prevTrack = this.playedStack.pop();
+    if (!prevTrack) return false;
+
+    // Put the current track back at the front of the queue so pressing
+    // "next" again returns to where we were, instead of losing it.
+    if (this.currentTrack) this.upcoming.unshift(this.currentTrack);
+    this._playTrack(prevTrack, { pushPrevious: false });
+    this._fillQueue();
+    return true;
+  }
+
+  pause() {
+    if (this._destroyed) return;
+    this.player.pause();
+  }
+
+  resume() {
+    if (this._destroyed) return;
+    this.player.unpause();
+  }
+
+  get isPaused() {
+    return this.player.state.status === AudioPlayerStatus.Paused;
+  }
+
+  reshuffleQueue() {
+    this.upcoming = [];
+    this._fillQueue();
+  }
+
+  addToQueueFront(track) {
+    this.upcoming.unshift(track);
+  }
+
+  getUpcoming(limit = QUEUE_LOOKAHEAD) {
+    return this.upcoming.slice(0, limit);
+  }
+
+  setVolume(percent) {
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+    this.volume = clamped;
+    this._resource?.volume?.setVolume(clamped / 100);
+    GuildSettingsRepo.setVolume(this.guild.id, clamped);
+    return clamped;
+  }
+
+  getProgressSeconds() {
+    if (!this.trackStartedAt) return 0;
+    return Math.floor((Date.now() - this.trackStartedAt) / 1000);
+  }
+
+  destroy(reason = 'manual') {
+    if (this._destroyed) return;
+    this._destroyed = true;
+    this.logger.info('destroying session', { reason });
+
+    if (this._source) this._source.destroy();
+    try {
+      this.player.stop(true);
+    } catch {
+      /* already stopped */
+    }
+    try {
+      this.connection.destroy();
+    } catch {
+      /* already destroyed */
+    }
+    this.emit('destroyed', reason);
+    this.removeAllListeners();
+  }
+}

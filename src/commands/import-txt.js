@@ -14,14 +14,14 @@ export const data = new ContextMenuCommandBuilder()
 
 export async function execute(interaction) {
   const dj = requireDJ(interaction);
-  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
+  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const message = interaction.targetMessage;
   const attachment = message.attachments.find(looksLikeTextAttachment);
   if (!attachment) {
     return interaction.reply({
       content: '❌ В этом сообщении нет TXT-файла для импорта.',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 

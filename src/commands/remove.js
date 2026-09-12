@@ -23,19 +23,19 @@ async function describePlaylist(guild, playlistId) {
 
 export async function execute(interaction) {
   const dj = requireDJ(interaction);
-  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
+  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const active = requireActiveSession(interaction);
-  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral });
+  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const track = active.session.currentTrack;
-  if (!track) return interaction.reply({ content: '❌ Сейчас ничего не играет.', flags: MessageFlags.Ephemeral });
+  if (!track) return interaction.reply({ content: '❌ Сейчас ничего не играет.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const playlistId = active.session.currentTrackPlaylistId;
   if (!playlistId) {
     return interaction.reply({
       content: 'ℹ️ Этот трек добавлен вручную (`/add-queue`) и не привязан ни к одному плейлисту — используй `/skip`.',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
@@ -48,5 +48,6 @@ export async function execute(interaction) {
   return interaction.reply({
     embeds: [trackRemovedEmbed(track, { playlistLabel })],
     components: result.hardDeleted ? [] : undoRemoveRow(playlistId, track.id),
+    flags: MessageFlags.SuppressNotifications,
   });
 }

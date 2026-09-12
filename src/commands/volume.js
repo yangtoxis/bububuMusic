@@ -12,14 +12,14 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   const dj = requireDJ(interaction);
-  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
+  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const value = interaction.options.getInteger('value', true);
   const active = requireActiveSession(interaction);
 
   if (active.ok) {
     const applied = active.session.setVolume(value);
-    return interaction.reply({ content: `🔊 Громкость установлена на ${applied}%.`, flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: `🔊 Громкость установлена на ${applied}%.`, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
   }
 
   // No active session yet: persist the value so the next /hype uses it.
@@ -27,6 +27,6 @@ export async function execute(interaction) {
   GuildSettingsRepo.setVolume(interaction.guild.id, clamped);
   return interaction.reply({
     content: `🔊 Громкость для этого сервера сохранена (${clamped}%) и будет применена при следующем запуске.`,
-    flags: MessageFlags.Ephemeral,
+    flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
   });
 }

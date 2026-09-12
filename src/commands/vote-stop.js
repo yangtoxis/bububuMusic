@@ -9,24 +9,24 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   const active = requireActiveSession(interaction);
-  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral });
+  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const memberVoiceChannel = interaction.member?.voice?.channel;
   if (!memberVoiceChannel || memberVoiceChannel.id !== active.session.voiceChannel.id) {
     return interaction.reply({
       content: '❌ Голосовать может только тот, кто находится в голосовом канале вместе с ботом.',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
   if (voteManager.hasActive(interaction.guild.id, 'stop')) {
     return interaction.reply({
       content: 'ℹ️ Голосование уже запущено — присоединяйся к нему кнопкой в сообщении выше.',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   await voteManager.start({
     guild: interaction.guild,

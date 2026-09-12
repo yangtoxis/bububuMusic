@@ -9,11 +9,11 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   const dj = requireDJ(interaction);
-  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
+  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const active = requireActiveSession(interaction);
-  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral });
+  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   stopHype(interaction.guild.id, 'dj_stop');
-  return interaction.reply({ content: '⏹️ Хайповый музон выключен.' });
+  return interaction.reply({ content: '⏹️ Хайповый музон выключен.', flags: MessageFlags.SuppressNotifications });
 }

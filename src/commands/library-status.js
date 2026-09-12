@@ -21,5 +21,5 @@ export async function execute(interaction) {
       { name: 'Личных плейлистов создано', value: String(personalPlaylists), inline: true }
     );
 
-  return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+  return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 }

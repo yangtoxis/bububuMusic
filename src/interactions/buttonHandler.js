@@ -17,23 +17,23 @@ export async function handleButton(interaction) {
   if (namespace === 'track') return handleTrackButton(interaction);
   if (namespace === 'queue') return handleQueueButton(interaction);
 
-  return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral });
+  return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 }
 
 async function handleControlButton(interaction) {
   const [, action] = interaction.customId.split(':');
 
   const dj = requireDJ(interaction);
-  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
+  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const active = requireActiveSession(interaction);
-  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral });
+  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
   const { session } = active;
 
   if (action === 'prev') {
     const moved = session.previous();
     if (!moved) {
-      return interaction.reply({ content: 'ℹ️ Дальше назад в истории ничего нет.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: 'ℹ️ Дальше назад в истории ничего нет.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
     }
     // The resulting trackChange event reposts the whole message on its own.
     return interaction.deferUpdate();
@@ -46,7 +46,7 @@ async function handleControlButton(interaction) {
 
   if (action === 'stop') {
     stopHype(interaction.guild.id, 'panel_stop');
-    return interaction.reply({ content: '⏹️ Хайповый музон выключен.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: '⏹️ Хайповый музон выключен.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
   }
 
   if (action === 'playpause') {
@@ -61,7 +61,7 @@ async function handleControlButton(interaction) {
     return interaction.update({ embeds: [trackAnnouncementEmbed(session)], components: playerControlRows(session) });
   }
 
-  return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral });
+  return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 }
 
 async function handleVoteButton(interaction) {
@@ -69,7 +69,7 @@ async function handleVoteButton(interaction) {
   const result = await voteManager.castVote(interaction.guild.id, kind, interaction.member);
   return interaction.reply({
     content: result.ok ? '✅ Голос засчитан!' : result.message,
-    flags: MessageFlags.Ephemeral,
+    flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
   });
 }
 
@@ -79,7 +79,7 @@ async function handleTrackButton(interaction) {
   const trackId = Number.parseInt(rawTrackId, 10);
 
   const dj = requireDJ(interaction);
-  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
+  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   if (action === 'unlink') {
     const result = removeTrackFromPlaylist(playlistId, trackId);
@@ -90,25 +90,25 @@ async function handleTrackButton(interaction) {
   if (action === 'relink') {
     const result = restoreTrackToPlaylist(playlistId, trackId);
     if (!result.ok) {
-      return interaction.reply({ content: '❌ Трек больше не существует, восстановить нельзя.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: '❌ Трек больше не существует, восстановить нельзя.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
     }
     return interaction.update({ content: '♻️ Трек восстановлен в плейлисте.', embeds: [], components: [] });
   }
 
-  return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral });
+  return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 }
 
 async function handleQueueButton(interaction) {
   const [, action] = interaction.customId.split(':');
   if (action !== 'shuffle') {
-    return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
   }
 
   const dj = requireDJ(interaction);
-  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
+  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const active = requireActiveSession(interaction);
-  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral });
+  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   active.session.reshuffleQueue();
   return interaction.update({ embeds: [queueEmbed(active.session)], components: queueShuffleRow() });

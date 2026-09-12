@@ -16,7 +16,7 @@ export async function execute(interaction) {
   if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
     return interaction.reply({
       content: '❌ Настраивать голосования может только тот, у кого есть право «Управление сервером».',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
@@ -27,12 +27,12 @@ export async function execute(interaction) {
     const settings = GuildSettingsRepo.get(interaction.guild.id);
     return interaction.reply({
       content: `Текущие пороги: включение — ${settings.vote_start_percent}%, отключение — ${settings.vote_stop_percent}%.`,
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
   if (startPercent != null) GuildSettingsRepo.setVoteStartPercent(interaction.guild.id, startPercent);
   if (stopPercent != null) GuildSettingsRepo.setVoteStopPercent(interaction.guild.id, stopPercent);
 
-  return interaction.reply({ content: '✅ Настройки голосований обновлены.', flags: MessageFlags.Ephemeral });
+  return interaction.reply({ content: '✅ Настройки голосований обновлены.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 }

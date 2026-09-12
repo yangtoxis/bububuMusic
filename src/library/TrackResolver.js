@@ -40,6 +40,45 @@ const FETCH_TIMEOUT_SECONDS = 20;
 // (appended after via -w) can be split back off reliably.
 const STATUS_MARKER = '\n__HYPOVYMUZON_STATUS__';
 
+// Yandex Music's anti-abuse system got progressively more aggressive over a
+// single day of manual testing against it - first blocking individual
+// requests (403), then serving every request a stripped no-data page
+// (200 but no og:title/JSON-LD at all), for single tracks and playlists
+// alike. That's IP-wide request-volume sensitivity, not anything specific
+// to one endpoint or URL - retrying after the fact doesn't address it.
+// This enforces a minimum gap between requests to the same host, process-
+// wide, regardless of how many playlist imports/adds are running
+// concurrently, so the bot physically cannot burst a host the way manual
+// testing did. Yandex gets a conservative gap; other hosts get a much
+// lighter one as cheap insurance against ever repeating this mistake.
+const MIN_HOST_INTERVAL_MS = {
+  'music.yandex.ru': 4000,
+  'music.yandex.com': 4000,
+  'music.yandex.by': 4000,
+  'music.yandex.kz': 4000,
+  'music.yandex.uz': 4000,
+};
+const DEFAULT_HOST_INTERVAL_MS = 500;
+
+const hostNextSlot = new Map(); // hostname -> Promise<number>, the timestamp the next request may fire
+
+// Reserves the next available time slot for `hostname` and waits for it.
+// Chains off the previous reservation so concurrent callers serialize
+// correctly instead of racing on a plain "last request time" variable.
+async function throttleHost(hostname) {
+  const minInterval = MIN_HOST_INTERVAL_MS[hostname] ?? DEFAULT_HOST_INTERVAL_MS;
+  const previousSlot = hostNextSlot.get(hostname) ?? Promise.resolve(0);
+  const mySlot = previousSlot.then(async (reservedAt) => {
+    const now = Date.now();
+    const myTurn = Math.max(now, reservedAt);
+    const wait = myTurn - now;
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    return myTurn + minInterval;
+  });
+  hostNextSlot.set(hostname, mySlot);
+  await mySlot;
+}
+
 // Shells out to curl instead of using Node's own fetch(). Some of these
 // services fingerprint the TLS/HTTP client and specifically block Node's
 // undici handshake while letting curl's through from the exact same IP -
@@ -88,6 +127,8 @@ function curlGet(url, headers = {}) {
 }
 
 export async function fetchHtml(url) {
+  const hostname = new URL(url).hostname;
+  await throttleHost(hostname);
   const { status, body } = await curlGet(url, { 'User-Agent': BOT_UA });
 
   if (status === 429 || status === 403) {

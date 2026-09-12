@@ -1,3 +1,4 @@
+import { MessageFlags } from 'discord.js';
 import { GuildSettingsRepo } from '../database/GuildSettingsRepo.js';
 import { isDjInVoiceChannel } from '../utils/djGuard.js';
 import { voteEmbed } from '../utils/embeds.js';
@@ -68,6 +69,7 @@ class VoteManager {
     const message = await textChannel.send({
       embeds: [this._buildEmbed(guild, state)],
       components: voteRow(kind),
+      flags: MessageFlags.SuppressNotifications,
     });
     state.message = message;
 

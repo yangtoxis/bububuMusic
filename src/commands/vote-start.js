@@ -12,35 +12,35 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   if (audioManager.has(interaction.guild.id)) {
-    return interaction.reply({ content: '❌ Хайповый музон уже играет.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: '❌ Хайповый музон уже играет.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
   }
 
   const library = PlaylistRepo.getOrCreateLibrary();
   if (PlaylistRepo.countReady(library.id) === 0) {
     return interaction.reply({
       content: '❌ В библиотеке «Хайповый музон» пока нет треков — голосовать не за что.',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
   const voice = checkVoicePreconditions(interaction);
-  if (!voice.ok) return interaction.reply({ content: voice.message, flags: MessageFlags.Ephemeral });
+  if (!voice.ok) return interaction.reply({ content: voice.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   if (isDjInVoiceChannel(voice.voiceChannel)) {
     return interaction.reply({
       content: 'ℹ️ В канале уже есть DJ — попроси его включить музыку через `/play`, голосование не требуется.',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
   if (voteManager.hasActive(interaction.guild.id, 'start')) {
     return interaction.reply({
       content: 'ℹ️ Голосование уже запущено — присоединяйся к нему кнопкой в сообщении выше.',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   await voteManager.start({
     guild: interaction.guild,
@@ -55,7 +55,7 @@ export async function execute(interaction) {
         textChannel: interaction.channel,
       });
       if (!result.ok) {
-        await interaction.channel.send({ content: result.message });
+        await interaction.channel.send({ content: result.message, flags: MessageFlags.SuppressNotifications });
       }
     },
   });

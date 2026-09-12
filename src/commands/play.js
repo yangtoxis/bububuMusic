@@ -18,14 +18,14 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   const dj = requireDJ(interaction);
-  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
+  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const voice = checkVoicePreconditions(interaction);
-  if (!voice.ok) return interaction.reply({ content: voice.message, flags: MessageFlags.Ephemeral });
+  if (!voice.ok) return interaction.reply({ content: voice.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const mode = interaction.options.getString('mode') ?? 'hype';
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const result = await startHype({
     guild: interaction.guild,

@@ -22,7 +22,7 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   const dj = requireDJ(interaction);
-  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
+  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const trackQuery = interaction.options.getString('track', true);
   const library = PlaylistRepo.getOrCreateLibrary();
@@ -32,7 +32,7 @@ export async function execute(interaction) {
     return runPlaylistUrlImport(interaction, playlistUrl, library.id);
   }
 
-  await interaction.deferReply();
+  await interaction.deferReply({ flags: MessageFlags.SuppressNotifications });
 
   let result;
   try {

@@ -1,3 +1,4 @@
+import { MessageFlags } from 'discord.js';
 import { parseTrackList } from './parseTrackList.js';
 import { libraryImportQueue } from './LibraryImportQueue.js';
 import { detectPlaylistUrl, resolvePlaylistUrlItems } from './PlaylistUrlResolver.js';
@@ -67,7 +68,7 @@ async function runItemsImport(interaction, items, playlistId, label) {
  * playlist, or a caller's personal one).
  */
 export async function runBulkImport(interaction, attachment, playlistId) {
-  await interaction.deferReply();
+  await interaction.deferReply({ flags: MessageFlags.SuppressNotifications });
 
   let text;
   try {
@@ -93,7 +94,7 @@ export async function runBulkImport(interaction, attachment, playlistId) {
  * track, same as a single-track add.
  */
 export async function runPlaylistUrlImport(interaction, detected, playlistId) {
-  await interaction.deferReply();
+  await interaction.deferReply({ flags: MessageFlags.SuppressNotifications });
   await interaction.editReply({ content: `⏳ Получаю список треков плейлиста с ${detected.label}...` });
 
   let items;

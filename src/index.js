@@ -64,7 +64,10 @@ client.on('interactionCreate', async (interaction) => {
       customId: interaction.customId,
       commandName: interaction.commandName,
     });
-    const payload = { content: '❌ Непредвиденная ошибка. Попробуй ещё раз.', flags: MessageFlags.Ephemeral };
+    const payload = {
+      content: '❌ Непредвиденная ошибка. Попробуй ещё раз.',
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
+    };
     try {
       if (interaction.deferred || interaction.replied) {
         await interaction.followUp(payload);

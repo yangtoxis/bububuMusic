@@ -9,10 +9,11 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   const active = requireActiveSession(interaction);
-  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral });
+  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   return interaction.reply({
     embeds: [queueEmbed(active.session)],
     components: queueShuffleRow(),
+    flags: MessageFlags.SuppressNotifications,
   });
 }

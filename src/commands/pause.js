@@ -8,16 +8,16 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   const dj = requireDJ(interaction);
-  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
+  if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   const active = requireActiveSession(interaction);
-  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral });
+  if (!active.ok) return interaction.reply({ content: active.message, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   if (active.session.isPaused) {
     active.session.resume();
-    return interaction.reply({ content: '▶️ Продолжаю воспроизведение.' });
+    return interaction.reply({ content: '▶️ Продолжаю воспроизведение.', flags: MessageFlags.SuppressNotifications });
   }
 
   active.session.pause();
-  return interaction.reply({ content: '⏸️ Пауза.' });
+  return interaction.reply({ content: '⏸️ Пауза.', flags: MessageFlags.SuppressNotifications });
 }

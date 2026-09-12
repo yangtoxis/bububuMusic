@@ -84,7 +84,7 @@ async function handleAdd(interaction, personal) {
     return runPlaylistUrlImport(interaction, playlistUrl, personal.id);
   }
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 
   let result;
   try {
@@ -108,7 +108,7 @@ async function handleAdd(interaction, personal) {
 async function handleImport(interaction, personal) {
   const attachment = interaction.options.getAttachment('file', true);
   if (!looksLikeTextAttachment(attachment)) {
-    return interaction.reply({ content: '❌ Нужен обычный TXT-файл.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: '❌ Нужен обычный TXT-файл.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
   }
   return runBulkImport(interaction, attachment, personal.id);
 }
@@ -118,7 +118,7 @@ async function handleStatus(interaction, personal) {
   if (tracks.length === 0) {
     return interaction.reply({
       content: 'ℹ️ Твой плейлист пуст. Добавь треки через `/playlist add` или `/playlist import`.',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
@@ -128,17 +128,17 @@ async function handleStatus(interaction, personal) {
   let content = `🎧 **Твой плейлист** — ${tracks.length} трек(ов):\n${lines.join('\n')}`;
   if (extra > 0) content += `\n…и ещё ${extra}.`;
 
-  return interaction.reply({ content, flags: MessageFlags.Ephemeral });
+  return interaction.reply({ content, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
 }
 
 async function handleClear(interaction, personal) {
   const result = clearPlaylist(personal.id);
   if (result.removedCount === 0) {
-    return interaction.reply({ content: 'ℹ️ Твой плейлист и так пуст.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: 'ℹ️ Твой плейлист и так пуст.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
   }
   return interaction.reply({
     content: `🗑️ Плейлист очищен: убрано ${result.removedCount} трек(ов), из них ${result.hardDeletedCount} удалено с диска (не встречались больше нигде).`,
-    flags: MessageFlags.Ephemeral,
+    flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
   });
 }
 
@@ -148,7 +148,7 @@ async function handleRemove(interaction, personal) {
   if (!Number.isFinite(trackId) || !PlaylistRepo.isLinked(personal.id, trackId)) {
     return interaction.reply({
       content: '❌ Не нашёл такой трек в твоём плейлисте — выбери один из подсказок при вводе.',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
@@ -158,6 +158,6 @@ async function handleRemove(interaction, personal) {
   return interaction.reply({
     embeds: [trackRemovedEmbed(track, { playlistLabel: 'твоего плейлиста' })],
     components: result.hardDeleted ? [] : undoRemoveRow(personal.id, trackId),
-    flags: MessageFlags.Ephemeral,
+    flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
   });
 }

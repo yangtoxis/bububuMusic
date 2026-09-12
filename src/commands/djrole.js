@@ -23,7 +23,7 @@ export async function execute(interaction) {
   if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
     return interaction.reply({
       content: '❌ Настраивать роли DJ может только тот, у кого есть право «Управление сервером».',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
 
@@ -32,24 +32,24 @@ export async function execute(interaction) {
   if (sub === 'add') {
     const role = interaction.options.getRole('role', true);
     DjRoleRepo.add(interaction.guild.id, role.id);
-    return interaction.reply({ content: `✅ Роль <@&${role.id}> теперь даёт права DJ.`, flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: `✅ Роль <@&${role.id}> теперь даёт права DJ.`, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
   }
 
   if (sub === 'remove') {
     const role = interaction.options.getRole('role', true);
     DjRoleRepo.remove(interaction.guild.id, role.id);
-    return interaction.reply({ content: `✅ Роль <@&${role.id}> больше не даёт права DJ.`, flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: `✅ Роль <@&${role.id}> больше не даёт права DJ.`, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
   }
 
   const roles = DjRoleRepo.list(interaction.guild.id);
   if (roles.length === 0) {
     return interaction.reply({
       content: 'Роли DJ пока не настроены. Только администраторы (право «Управление сервером») могут управлять музыкой напрямую — остальным доступно только голосование.',
-      flags: MessageFlags.Ephemeral,
+      flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }
   return interaction.reply({
     content: `Роли DJ: ${roles.map((r) => `<@&${r}>`).join(', ')}`,
-    flags: MessageFlags.Ephemeral,
+    flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
   });
 }

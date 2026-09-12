@@ -17,6 +17,7 @@ export function attachSessionUI(session) {
     try {
       await session.textChannel.send({
         content: `⚠️ Не удалось воспроизвести «${track?.artist ?? '?'} — ${track?.title ?? '?'}», пропускаю.`,
+        flags: MessageFlags.SuppressNotifications,
       });
     } catch (err) {
       logger.warn('failed to post track error notice', { error: err.message });
@@ -25,7 +26,7 @@ export function attachSessionUI(session) {
 
   session.on('error', async (message) => {
     try {
-      await session.textChannel.send({ content: `⚠️ ${message}` });
+      await session.textChannel.send({ content: `⚠️ ${message}`, flags: MessageFlags.SuppressNotifications });
     } catch (err) {
       logger.warn('failed to post session error', { error: err.message });
     }
@@ -33,7 +34,10 @@ export function attachSessionUI(session) {
 
   session.on('empty', async () => {
     try {
-      await session.textChannel.send({ content: 'В библиотеке «Хайповый музон» пока нет треков.' });
+      await session.textChannel.send({
+        content: 'В библиотеке «Хайповый музон» пока нет треков.',
+        flags: MessageFlags.SuppressNotifications,
+      });
     } catch (err) {
       logger.warn('failed to post empty-library notice', { error: err.message });
     }

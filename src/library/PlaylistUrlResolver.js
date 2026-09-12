@@ -17,7 +17,9 @@ const logger = createLogger({ module: 'PlaylistUrlResolver' });
 const SPOTIFY_PLAYLIST_RE = /open\.spotify\.com\/(?:intl-\w+\/)?playlist\/[a-zA-Z0-9]+/i;
 const SPOTIFY_ALBUM_RE = /open\.spotify\.com\/(?:intl-\w+\/)?album\/[a-zA-Z0-9]+/i;
 const YANDEX_ALBUM_ONLY_RE = /music\.yandex\.(ru|com|by|kz|uz)\/album\/\d+\/?(?:[?#]|$)/i;
-const YANDEX_PLAYLIST_RE = /music\.yandex\.(ru|com|by|kz|uz)\/users\/[^/]+\/playlists\/\d+/i;
+// Covers both a named user playlist (/users/<name>/playlists/<id>) and a
+// personal share link like "Мне нравится" (/playlists/<uuid>, no /users/).
+const YANDEX_PLAYLIST_RE = /music\.yandex\.(ru|com|by|kz|uz)\/(?:users\/[^/]+\/)?playlists\/[\w.-]+/i;
 const SOUNDCLOUD_SET_RE = /soundcloud\.com\/[^/?#]+\/sets\/[^/?#]+/i;
 
 // Public scraping only exposes the first page of a large playlist either
@@ -60,6 +62,36 @@ async function resolveSpotifyPlaylist(url) {
   return items;
 }
 
+// Only album pages (and some curated playlists) embed the full track list
+// in their schema.org JSON-LD block. Large/personal playlists (e.g. "Мне
+// нравится" liked-tracks share links) only put summary info there
+// (numTracks, no `tracks` array) - the actual per-track data instead lives
+// scattered through the page's Next.js hydration state, one object per
+// track carrying its own "title" plus a "realId"/"artists" a bit further
+// along. There's no clean single JSON blob to parse (React streams it in
+// pieces), so this walks each "realId" occurrence and pulls the nearest
+// preceding title / following artist name out of the surrounding text
+// instead of a full parse.
+function extractTracksFromHydrationState(html) {
+  const items = [];
+  const realIdRe = /"realId":"\d+"/g;
+  let match;
+  while ((match = realIdRe.exec(html))) {
+    const before = html.slice(Math.max(0, match.index - 600), match.index);
+    const titleMatches = [...before.matchAll(/"title":"((?:[^"\\]|\\.)*)"/g)];
+    const titleRaw = titleMatches.at(-1)?.[1];
+    if (!titleRaw) continue;
+
+    const after = html.slice(match.index, match.index + 500);
+    const artistRaw = after.match(/"artists":\[\{"id":"[^"]*","name":"((?:[^"\\]|\\.)*)"/)?.[1] ?? '';
+
+    const title = decodeHtmlEntities(JSON.parse(`"${titleRaw}"`));
+    const artist = artistRaw ? decodeHtmlEntities(JSON.parse(`"${artistRaw}"`)) : '';
+    items.push({ raw: artist ? `${artist} - ${title}` : title, artist, title });
+  }
+  return items;
+}
+
 async function resolveYandexPlaylist(url) {
   const html = await fetchHtml(url);
   const ldMatch = html.match(/<script type="application\/ld\+json">(.*?)<\/script>/s);
@@ -74,30 +106,35 @@ async function resolveYandexPlaylist(url) {
     throw new UnresolvableError('Не удалось разобрать данные страницы Яндекс Музыки.');
   }
 
-  const tracks = Array.isArray(data.tracks) ? data.tracks : [];
-  if (tracks.length === 0) {
+  const ldTracks = Array.isArray(data.tracks) ? data.tracks : [];
+
+  if (ldTracks.length > 0) {
+    // A single-artist album's page-level og:description reliably names the
+    // artist ("Artist • Альбом • Год") - reuse it for every track. A
+    // user-curated playlist can mix artists, so we deliberately don't guess
+    // one there and let each track resolve by title alone.
+    let sharedArtist = '';
+    if (data['@type'] === 'MusicAlbum') {
+      const ogDescription = html.match(/<meta property="og:description" content="([^"]*)"/)?.[1];
+      sharedArtist = splitArtistFromDescription(decodeHtmlEntities(ogDescription || ''));
+    }
+
+    return ldTracks
+      .slice(0, PLAYLIST_ITEM_LIMIT)
+      .map((t) => decodeHtmlEntities(t.name || '').trim())
+      .filter(Boolean)
+      .map((title) => ({
+        raw: sharedArtist ? `${sharedArtist} - ${title}` : title,
+        artist: sharedArtist,
+        title,
+      }));
+  }
+
+  const items = extractTracksFromHydrationState(html).slice(0, PLAYLIST_ITEM_LIMIT);
+  if (items.length === 0) {
     throw new UnresolvableError('Не удалось найти треки на этой странице Яндекс Музыки.');
   }
-
-  // A single-artist album's page-level og:description reliably names the
-  // artist ("Artist • Альбом • Год") - reuse it for every track. A
-  // user-curated playlist can mix artists, so we deliberately don't guess
-  // one there and let each track resolve by title alone.
-  let sharedArtist = '';
-  if (data['@type'] === 'MusicAlbum') {
-    const ogDescription = html.match(/<meta property="og:description" content="([^"]*)"/)?.[1];
-    sharedArtist = splitArtistFromDescription(decodeHtmlEntities(ogDescription || ''));
-  }
-
-  return tracks
-    .slice(0, PLAYLIST_ITEM_LIMIT)
-    .map((t) => decodeHtmlEntities(t.name || '').trim())
-    .filter(Boolean)
-    .map((title) => ({
-      raw: sharedArtist ? `${sharedArtist} - ${title}` : title,
-      artist: sharedArtist,
-      title,
-    }));
+  return items;
 }
 
 function runYtDlpFlatPlaylist(url, timeoutMs) {

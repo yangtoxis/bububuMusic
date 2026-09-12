@@ -101,8 +101,25 @@ export async function fetchHtml(url) {
   return body;
 }
 
+// Some of these sites occasionally answer 200 with a stripped client-shell
+// page - no og tags, no embedded data - instead of the real server-
+// rendered content, seemingly at random (more often under sustained
+// request volume from the same IP, but not reliably tied to any one
+// signal we can detect up front). Retrying a couple of times with a short
+// pause is cheap insurance and usually gets the real page on a later try
+// instead of failing outright on what's actually a transient hiccup.
+export async function fetchHtmlWithRetry(url, isValid, { attempts = 3, delayMs = 2500 } = {}) {
+  let html = '';
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    html = await fetchHtml(url);
+    if (isValid(html)) return html;
+    if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return html;
+}
+
 export async function fetchOgMeta(url, sourceLabel) {
-  const html = await fetchHtml(url);
+  const html = await fetchHtmlWithRetry(url, (h) => /<meta property="og:title"/.test(h));
   const title = html.match(/<meta property="og:title" content="([^"]*)"/)?.[1];
   const description = html.match(/<meta property="og:description" content="([^"]*)"/)?.[1];
   if (!title) {
@@ -117,7 +134,7 @@ export async function fetchOgMeta(url, sourceLabel) {
 // SoundCloud doesn't reliably carry artist in og:description, but its
 // <title> tag follows a stable "Stream {title} by {artist} | ..." pattern.
 export async function fetchSoundCloudMeta(url) {
-  const html = await fetchHtml(url);
+  const html = await fetchHtmlWithRetry(url, (h) => /<title>Stream .+? by .+? \|/.test(h));
   const match = html.match(/<title>Stream (.+?) by (.+?) \|/);
   if (!match) {
     throw new UnresolvableError('Не удалось найти название трека на странице SoundCloud.');

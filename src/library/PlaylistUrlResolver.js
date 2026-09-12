@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import {
   fetchHtml,
+  fetchHtmlWithRetry,
   fetchOgMeta,
   fetchSoundCloudMeta,
   splitArtistFromDescription,
@@ -42,7 +43,7 @@ export function detectPlaylistUrl(text) {
 }
 
 async function resolveSpotifyPlaylist(url) {
-  const html = await fetchHtml(url);
+  const html = await fetchHtmlWithRetry(url, (h) => h.includes('name="music:song"'));
   const trackUrls = [...html.matchAll(/name="music:song" content="(https:\/\/open\.spotify\.com\/track\/[a-zA-Z0-9]+)"/g)]
     .map((m) => m[1])
     .slice(0, PLAYLIST_ITEM_LIMIT);
@@ -93,7 +94,10 @@ function extractTracksFromHydrationState(html) {
 }
 
 async function resolveYandexPlaylist(url) {
-  const html = await fetchHtml(url);
+  // og:title is present on every real (server-rendered) Yandex Music page
+  // regardless of type - the most reliable single signal that this isn't
+  // the stripped client-shell variant.
+  const html = await fetchHtmlWithRetry(url, (h) => /<meta property="og:title"/.test(h));
   const ldMatch = html.match(/<script type="application\/ld\+json">(.*?)<\/script>/s);
   if (!ldMatch) {
     throw new UnresolvableError('Не удалось найти список треков на странице Яндекс Музыки.');

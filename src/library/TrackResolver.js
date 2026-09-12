@@ -311,7 +311,16 @@ export async function resolveTrackRequest(input, { addedBy, playlistId = null } 
     result = await resolveBySearch({ artist: meta.artist, title: meta.title, addedBy });
   } else if (YANDEX_TRACK_URL_RE.test(trimmed)) {
     const trackId = trimmed.match(YANDEX_TRACK_URL_RE)[2];
-    const meta = await fetchYandexTrackMeta(trackId);
+    let meta;
+    try {
+      meta = await fetchYandexTrackMeta(trackId);
+    } catch (err) {
+      // api.music.yandex.* is geo-blocked (HTTP 451) from at least some
+      // server locations even though the regular site isn't - fall back to
+      // scraping the track's normal page when the API isn't reachable.
+      logger.warn('yandex api unavailable for track, falling back to page scraping', { error: err.message, trackId });
+      meta = await fetchOgMeta(trimmed, 'Яндекс Музыки');
+    }
     result = await resolveBySearch({ artist: meta.artist, title: meta.title, addedBy });
   } else if (SOUNDCLOUD_URL_RE.test(trimmed)) {
     const meta = await fetchSoundCloudMeta(trimmed);

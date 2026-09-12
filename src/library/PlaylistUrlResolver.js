@@ -5,6 +5,8 @@ import {
   fetchSoundCloudMeta,
   fetchYandexApi,
   yandexTrackToItem,
+  splitArtistFromDescription,
+  decodeHtmlEntities,
   UnresolvableError,
 } from './TrackResolver.js';
 import { createLogger } from '../utils/logger.js';
@@ -75,7 +77,7 @@ function toItem(track, fallbackArtist) {
   return { raw: artist ? `${artist} - ${title}` : title, artist, title };
 }
 
-async function resolveYandexPlaylist(url) {
+async function resolveYandexPlaylistViaApi(url) {
   const albumMatch = url.match(YANDEX_ALBUM_ID_RE);
   if (albumMatch) {
     const album = await fetchYandexApi(`albums/${albumMatch[1]}/with-tracks`);
@@ -104,6 +106,77 @@ async function resolveYandexPlaylist(url) {
     throw new UnresolvableError('Не удалось найти треки в этом плейлисте Яндекс Музыки.');
   }
   return entries.slice(0, PLAYLIST_ITEM_LIMIT).map((entry) => toItem(entry.track || entry));
+}
+
+// api.music.yandex.* (the API path above) is geo-blocked with HTTP 451
+// from at least some server locations, even though the regular site isn't
+// - confirmed in production (works from a dev machine, 451 from the actual
+// VPS). Falls back to scraping the regular page when the API isn't
+// reachable from wherever this process happens to be running.
+function extractYandexTracksFromHydrationState(html) {
+  const items = [];
+  const realIdRe = /"realId":"\d+"/g;
+  let match;
+  while ((match = realIdRe.exec(html))) {
+    const before = html.slice(Math.max(0, match.index - 600), match.index);
+    const titleMatches = [...before.matchAll(/"title":"((?:[^"\\]|\\.)*)"/g)];
+    const titleRaw = titleMatches.at(-1)?.[1];
+    if (!titleRaw) continue;
+
+    const after = html.slice(match.index, match.index + 500);
+    const artistRaw = after.match(/"artists":\[\{"id":"[^"]*","name":"((?:[^"\\]|\\.)*)"/)?.[1] ?? '';
+
+    const title = decodeHtmlEntities(JSON.parse(`"${titleRaw}"`));
+    const artist = artistRaw ? decodeHtmlEntities(JSON.parse(`"${artistRaw}"`)) : '';
+    items.push({ raw: artist ? `${artist} - ${title}` : title, artist, title });
+  }
+  return items;
+}
+
+async function resolveYandexPlaylistViaScraping(url) {
+  const html = await fetchHtmlWithRetry(url, (h) => /<meta property="og:title"/.test(h));
+  const ldMatch = html.match(/<script type="application\/ld\+json">(.*?)<\/script>/s);
+
+  if (ldMatch) {
+    let data;
+    try {
+      data = JSON.parse(ldMatch[1]);
+    } catch {
+      data = null;
+    }
+    const ldTracks = Array.isArray(data?.tracks) ? data.tracks : [];
+    if (ldTracks.length > 0) {
+      let sharedArtist = '';
+      if (data['@type'] === 'MusicAlbum') {
+        const ogDescription = html.match(/<meta property="og:description" content="([^"]*)"/)?.[1];
+        sharedArtist = splitArtistFromDescription(decodeHtmlEntities(ogDescription || ''));
+      }
+      return ldTracks
+        .slice(0, PLAYLIST_ITEM_LIMIT)
+        .map((t) => decodeHtmlEntities(t.name || '').trim())
+        .filter(Boolean)
+        .map((title) => ({
+          raw: sharedArtist ? `${sharedArtist} - ${title}` : title,
+          artist: sharedArtist,
+          title,
+        }));
+    }
+  }
+
+  const items = extractYandexTracksFromHydrationState(html).slice(0, PLAYLIST_ITEM_LIMIT);
+  if (items.length === 0) {
+    throw new UnresolvableError('Не удалось найти треки на этой странице Яндекс Музыки.');
+  }
+  return items;
+}
+
+async function resolveYandexPlaylist(url) {
+  try {
+    return await resolveYandexPlaylistViaApi(url);
+  } catch (err) {
+    logger.warn('yandex api unavailable for playlist, falling back to page scraping', { error: err.message, url });
+    return resolveYandexPlaylistViaScraping(url);
+  }
 }
 
 function runYtDlpFlatPlaylist(url, timeoutMs) {

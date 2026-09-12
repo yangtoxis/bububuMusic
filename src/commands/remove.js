@@ -40,8 +40,10 @@ export async function execute(interaction) {
   }
 
   const playlistLabel = await describePlaylist(interaction.guild, playlistId);
+  // removeTrackFromPlaylist evicts the track from every live session,
+  // including this one - it skips past it automatically since it's the
+  // one currently playing.
   const result = removeTrackFromPlaylist(playlistId, track.id);
-  active.session.skip();
 
   return interaction.reply({
     embeds: [trackRemovedEmbed(track, { playlistLabel })],

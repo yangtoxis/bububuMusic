@@ -28,6 +28,25 @@ client.once('clientReady', async () => {
 });
 
 client.on('interactionCreate', async (interaction) => {
+  // Autocomplete can only ever be answered with .respond() - never .reply()
+  // - so it gets its own try/catch instead of falling into the generic
+  // error handler below, which would try (and fail) to send a normal reply.
+  if (interaction.isAutocomplete()) {
+    try {
+      const command = commands.get(interaction.commandName);
+      if (command?.autocomplete) await command.autocomplete(interaction);
+      else await interaction.respond([]);
+    } catch (err) {
+      logger.error('autocomplete handling failed', { error: err.message, commandName: interaction.commandName });
+      try {
+        await interaction.respond([]);
+      } catch {
+        /* interaction may have expired */
+      }
+    }
+    return;
+  }
+
   try {
     if (interaction.isChatInputCommand() || interaction.isMessageContextMenuCommand()) {
       const command = commands.get(interaction.commandName);

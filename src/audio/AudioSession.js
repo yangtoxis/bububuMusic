@@ -280,6 +280,23 @@ export class AudioSession extends EventEmitter {
     this.player.stop(true);
   }
 
+  // A track was just removed from the playlist it was drawn from (anywhere
+  // - not necessarily this guild). Drop it from the upcoming queue if it's
+  // sitting there, and skip past it immediately if it's currently playing.
+  evictTrack(trackId) {
+    if (this._destroyed) return;
+
+    const wasQueued = this.upcoming.some((t) => t.id === trackId);
+    if (wasQueued) {
+      this.upcoming = this.upcoming.filter((t) => t.id !== trackId);
+      this._fillQueue();
+    }
+
+    if (this.currentTrack?.id === trackId) {
+      this.skip();
+    }
+  }
+
   previous() {
     if (this._destroyed) return false;
     const prevTrack = this.playedStack.pop();

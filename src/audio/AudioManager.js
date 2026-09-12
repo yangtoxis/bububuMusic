@@ -39,6 +39,13 @@ class AudioManager {
   destroyAll(reason) {
     for (const session of this.sessions.values()) session.destroy(reason);
   }
+
+  // A track just got removed from a playlist somewhere - drop it from
+  // every live session's queue (and skip it if it's the one currently
+  // playing), in every guild, not just the one the removal happened in.
+  evictTrackEverywhere(trackId) {
+    for (const session of this.sessions.values()) session.evictTrack(trackId);
+  }
 }
 
 export const audioManager = new AudioManager();

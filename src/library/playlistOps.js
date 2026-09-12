@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { PlaylistRepo } from '../database/PlaylistRepo.js';
 import { TrackRepo } from '../database/TrackRepo.js';
+import { audioManager } from '../audio/AudioManager.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger({ module: 'playlistOps' });
@@ -15,16 +16,23 @@ function deleteFile(filePath) {
 /**
  * Removes one track from one playlist. If that was the track's last
  * playlist reference anywhere, the track is fully deleted (DB row + file)
- * instead of being left as an orphan nobody can reach.
+ * instead of being left as an orphan nobody can reach. Either way, any live
+ * session (any guild) that already had this track queued or playing drops
+ * it immediately instead of getting to it later and finding it gone.
  */
 export function removeTrackFromPlaylist(playlistId, trackId) {
   PlaylistRepo.unlink(playlistId, trackId);
   const remaining = PlaylistRepo.countReferences(trackId);
-  if (remaining > 0) return { hardDeleted: false };
+
+  if (remaining > 0) {
+    audioManager.evictTrackEverywhere(trackId);
+    return { hardDeleted: false };
+  }
 
   const track = TrackRepo.getById(trackId);
   TrackRepo.deleteById(trackId);
   deleteFile(track?.file_path);
+  audioManager.evictTrackEverywhere(trackId);
   return { hardDeleted: true, track };
 }
 
@@ -38,10 +46,14 @@ export function clearPlaylist(playlistId) {
   let hardDeletedCount = 0;
 
   for (const trackId of trackIds) {
-    if (PlaylistRepo.countReferences(trackId) > 0) continue;
+    if (PlaylistRepo.countReferences(trackId) > 0) {
+      audioManager.evictTrackEverywhere(trackId);
+      continue;
+    }
     const track = TrackRepo.getById(trackId);
     TrackRepo.deleteById(trackId);
     deleteFile(track?.file_path);
+    audioManager.evictTrackEverywhere(trackId);
     hardDeletedCount += 1;
   }
 

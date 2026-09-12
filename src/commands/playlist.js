@@ -2,10 +2,11 @@ import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { resolveTrackRequest, UnresolvableError } from '../library/TrackResolver.js';
 import { detectPlaylistUrl } from '../library/PlaylistUrlResolver.js';
 import { runBulkImport, runPlaylistUrlImport, looksLikeTextAttachment } from '../library/bulkImportFlow.js';
-import { clearPlaylist } from '../library/playlistOps.js';
+import { clearPlaylist, removeTrackFromPlaylist } from '../library/playlistOps.js';
 import { PlaylistRepo } from '../database/PlaylistRepo.js';
-import { trackAddedEmbed } from '../utils/embeds.js';
-import { undoAddRow } from '../utils/controls.js';
+import { TrackRepo } from '../database/TrackRepo.js';
+import { trackAddedEmbed, trackRemovedEmbed } from '../utils/embeds.js';
+import { undoAddRow, undoRemoveRow } from '../utils/controls.js';
 import { trackLabel, formatDuration } from '../utils/format.js';
 import { createLogger } from '../utils/logger.js';
 
@@ -35,7 +36,19 @@ export const data = new SlashCommandBuilder()
       )
   )
   .addSubcommand((sub) => sub.setName('status').setDescription('Показать свой плейлист'))
-  .addSubcommand((sub) => sub.setName('clear').setDescription('Очистить свой плейлист'));
+  .addSubcommand((sub) => sub.setName('clear').setDescription('Очистить свой плейлист'))
+  .addSubcommand((sub) =>
+    sub
+      .setName('remove')
+      .setDescription('Убрать трек из своего плейлиста (в т.ч. если он играет прямо сейчас)')
+      .addStringOption((opt) =>
+        opt
+          .setName('track')
+          .setDescription('Какой трек убрать')
+          .setRequired(true)
+          .setAutocomplete(true)
+      )
+  );
 
 export async function execute(interaction) {
   const sub = interaction.options.getSubcommand();
@@ -45,6 +58,22 @@ export async function execute(interaction) {
   if (sub === 'import') return handleImport(interaction, personal);
   if (sub === 'status') return handleStatus(interaction, personal);
   if (sub === 'clear') return handleClear(interaction, personal);
+  if (sub === 'remove') return handleRemove(interaction, personal);
+}
+
+export async function autocomplete(interaction) {
+  if (interaction.options.getSubcommand() !== 'remove') return interaction.respond([]);
+
+  const personal = PlaylistRepo.getOrCreatePersonal(interaction.user.id);
+  const typed = interaction.options.getFocused().toLowerCase();
+  const tracks = PlaylistRepo.listReady(personal.id);
+
+  const matches = tracks
+    .filter((t) => trackLabel(t).toLowerCase().includes(typed))
+    .slice(0, 25)
+    .map((t) => ({ name: trackLabel(t).slice(0, 100), value: String(t.id) }));
+
+  return interaction.respond(matches);
 }
 
 async function handleAdd(interaction, personal) {
@@ -109,6 +138,26 @@ async function handleClear(interaction, personal) {
   }
   return interaction.reply({
     content: `🗑️ Плейлист очищен: убрано ${result.removedCount} трек(ов), из них ${result.hardDeletedCount} удалено с диска (не встречались больше нигде).`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleRemove(interaction, personal) {
+  const trackId = Number.parseInt(interaction.options.getString('track', true), 10);
+
+  if (!Number.isFinite(trackId) || !PlaylistRepo.isLinked(personal.id, trackId)) {
+    return interaction.reply({
+      content: '❌ Не нашёл такой трек в твоём плейлисте — выбери один из подсказок при вводе.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const track = TrackRepo.getById(trackId);
+  const result = removeTrackFromPlaylist(personal.id, trackId);
+
+  return interaction.reply({
+    embeds: [trackRemovedEmbed(track, { playlistLabel: 'твоего плейлиста' })],
+    components: result.hardDeleted ? [] : undoRemoveRow(personal.id, trackId),
     flags: MessageFlags.Ephemeral,
   });
 }

@@ -37,7 +37,11 @@ export function playerControlRows(session) {
       new ButtonBuilder()
         .setStyle(ButtonStyle.Link)
         .setURL(`https://music.yandex.ru/search?text=${query}`)
-        .setEmoji(platformEmojis.yandex)
+        .setEmoji(platformEmojis.yandex),
+      new ButtonBuilder()
+        .setStyle(ButtonStyle.Link)
+        .setURL(`https://soundcloud.com/search?q=${query}`)
+        .setEmoji(platformEmojis.soundcloud)
     );
     rows.push(linkRow);
   }

@@ -10,12 +10,14 @@ export const platformEmojis = {
   youtube: '📺',
   spotify: '🎧',
   yandex: '🎵',
+  soundcloud: '☁️',
 };
 
 const NAME_TO_KEY = {
   platform_youtube: 'youtube',
   platform_spotify: 'spotify',
   platform_yandex: 'yandex',
+  platform_soundcloud: 'soundcloud',
 };
 
 export async function loadPlatformEmojis(client) {
@@ -29,6 +31,7 @@ export async function loadPlatformEmojis(client) {
       youtube: typeof platformEmojis.youtube === 'object',
       spotify: typeof platformEmojis.spotify === 'object',
       yandex: typeof platformEmojis.yandex === 'object',
+      soundcloud: typeof platformEmojis.soundcloud === 'object',
     });
   } catch (err) {
     logger.warn('failed to load application emojis, falling back to unicode', { error: err.message });

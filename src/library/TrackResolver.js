@@ -41,6 +41,11 @@ export async function fetchHtml(url) {
   } catch (err) {
     throw new UnresolvableError(`Не удалось открыть ссылку: ${err.message}`);
   }
+  if (res.status === 429 || res.status === 403) {
+    throw new UnresolvableError(
+      'Источник временно ограничил доступ с сервера бота (слишком много запросов подряд). Обычно это снимается само через некоторое время — попробуй ещё раз чуть позже.'
+    );
+  }
   if (!res.ok) {
     throw new UnresolvableError(`Сервер вернул ошибку (HTTP ${res.status}) при открытии ссылки.`);
   }

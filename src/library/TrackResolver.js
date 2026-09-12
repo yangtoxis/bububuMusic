@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { TrackRepo, normalizeDedupKey } from '../database/TrackRepo.js';
 import { PlaylistRepo } from '../database/PlaylistRepo.js';
 import { resolveAndDownloadTrack } from './YtDlpResolver.js';
@@ -34,22 +35,70 @@ export function splitArtistFromDescription(description) {
   return (first || '').trim();
 }
 
+const FETCH_TIMEOUT_SECONDS = 20;
+// Marks the end of the response body in curl's stdout so the HTTP status
+// (appended after via -w) can be split back off reliably.
+const STATUS_MARKER = '\n__HYPOVYMUZON_STATUS__';
+
+// Shells out to curl instead of using Node's own fetch(). Some of these
+// services fingerprint the TLS/HTTP client and specifically block Node's
+// undici handshake while letting curl's through from the exact same IP -
+// confirmed in production against Yandex Music (identical request, same
+// host: 403 from fetch(), 200 from curl). Mirrors the same spawn pattern
+// YtDlpResolver.js already uses for yt-dlp.
+function curlGet(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const headerArgs = Object.entries(headers).flatMap(([key, value]) => ['-H', `${key}: ${value}`]);
+    const args = [
+      '-sL',
+      '--max-time', String(FETCH_TIMEOUT_SECONDS),
+      '-w', STATUS_MARKER + '%{http_code}',
+      ...headerArgs,
+      url,
+    ];
+
+    const child = spawn('curl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString().slice(0, 300);
+    });
+    child.on('error', (err) => {
+      reject(new UnresolvableError(`Не удалось запустить curl: ${err.message}`));
+    });
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new UnresolvableError(`Не удалось открыть ссылку: curl завершился с кодом ${code} (${stderr.trim().slice(0, 200)})`));
+        return;
+      }
+      const markerIndex = stdout.lastIndexOf(STATUS_MARKER);
+      if (markerIndex === -1) {
+        reject(new UnresolvableError('Не удалось открыть ссылку: неожиданный ответ curl.'));
+        return;
+      }
+      const body = stdout.slice(0, markerIndex);
+      const status = Number.parseInt(stdout.slice(markerIndex + STATUS_MARKER.length), 10);
+      resolve({ status, body });
+    });
+  });
+}
+
 export async function fetchHtml(url) {
-  let res;
-  try {
-    res = await fetch(url, { headers: { 'User-Agent': BOT_UA } });
-  } catch (err) {
-    throw new UnresolvableError(`Не удалось открыть ссылку: ${err.message}`);
-  }
-  if (res.status === 429 || res.status === 403) {
+  const { status, body } = await curlGet(url, { 'User-Agent': BOT_UA });
+
+  if (status === 429 || status === 403) {
     throw new UnresolvableError(
       'Источник временно ограничил доступ с сервера бота (слишком много запросов подряд). Обычно это снимается само через некоторое время — попробуй ещё раз чуть позже.'
     );
   }
-  if (!res.ok) {
-    throw new UnresolvableError(`Сервер вернул ошибку (HTTP ${res.status}) при открытии ссылки.`);
+  if (status < 200 || status >= 300) {
+    throw new UnresolvableError(`Сервер вернул ошибку (HTTP ${status}) при открытии ссылки.`);
   }
-  return res.text();
+  return body;
 }
 
 export async function fetchOgMeta(url, sourceLabel) {

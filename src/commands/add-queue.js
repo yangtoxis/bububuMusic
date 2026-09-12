@@ -29,7 +29,7 @@ export async function execute(interaction) {
 
   let result;
   try {
-    result = await resolveTrackRequest(trackQuery, { addedBy: interaction.user.id, inLibrary: false });
+    result = await resolveTrackRequest(trackQuery, { addedBy: interaction.user.id });
   } catch (err) {
     if (err instanceof UnresolvableError) {
       return interaction.editReply({ content: `❌ ${err.message}` });

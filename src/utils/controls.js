@@ -55,16 +55,24 @@ export function voteRow(kind) {
   return [row];
 }
 
-export function undoAddRow(trackId) {
+export function undoAddRow(playlistId, trackId) {
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`track:undo-add:${trackId}`).setLabel('Отменить').setEmoji('↩️').setStyle(ButtonStyle.Danger)
+    new ButtonBuilder()
+      .setCustomId(`track:unlink:${playlistId}:${trackId}`)
+      .setLabel('Отменить')
+      .setEmoji('↩️')
+      .setStyle(ButtonStyle.Danger)
   );
   return [row];
 }
 
-export function undoRemoveRow(trackId) {
+export function undoRemoveRow(playlistId, trackId) {
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`track:undo-remove:${trackId}`).setLabel('Отменить').setEmoji('↩️').setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder()
+      .setCustomId(`track:relink:${playlistId}:${trackId}`)
+      .setLabel('Отменить')
+      .setEmoji('↩️')
+      .setStyle(ButtonStyle.Secondary)
   );
   return [row];
 }

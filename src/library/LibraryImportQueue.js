@@ -1,4 +1,5 @@
 import { TrackRepo, normalizeDedupKey } from '../database/TrackRepo.js';
+import { PlaylistRepo } from '../database/PlaylistRepo.js';
 import { ImportJobRepo } from '../database/ImportJobRepo.js';
 import { resolveTrackRequest, UnresolvableError } from './TrackResolver.js';
 import { ResolveError } from './YtDlpResolver.js';
@@ -17,10 +18,11 @@ class LibraryImportQueue {
     this._jobs = new Map(); // jobId -> { items, cursor, result, onProgress, activeWorkers }
   }
 
-  enqueue(job, items, { onProgress } = {}) {
+  enqueue(job, items, { onProgress, playlistId } = {}) {
     const state = {
       job,
       items,
+      playlistId,
       cursor: 0,
       counts: { processed: 0, added: 0, existing: 0, failed: 0 },
       failedItems: [],
@@ -60,24 +62,25 @@ class LibraryImportQueue {
     // was typed (cheap early skip, avoids a redundant search+download for a
     // line that was imported before under the same typed spelling).
     const dedupKey = normalizeDedupKey(item.artist, item.title);
-    const existing = TrackRepo.findByDedupKey(dedupKey);
+    const existingTrack = TrackRepo.findByDedupKey(dedupKey);
 
-    if (existing && existing.status === 'ready') {
-      state.counts.existing += 1;
+    if (existingTrack && existingTrack.status === 'ready') {
+      // Already downloaded (for this playlist, another playlist, or the
+      // library) - reuse the file, just make sure it's linked here too.
+      if (!state.playlistId || PlaylistRepo.isLinked(state.playlistId, existingTrack.id)) {
+        state.counts.existing += 1;
+      } else {
+        PlaylistRepo.link(state.playlistId, existingTrack.id);
+        state.counts.added += 1;
+      }
+      state.counts.processed += 1;
       this._reportProgress(state);
       return;
     }
 
     try {
-      const result = await resolveTrackRequest(item.raw, {
-        addedBy: state.job.requested_by,
-        inLibrary: true,
-      });
-      if (result.wasNew) {
-        state.counts.added += 1;
-      } else {
-        state.counts.existing += 1;
-      }
+      await resolveTrackRequest(item.raw, { addedBy: state.job.requested_by, playlistId: state.playlistId });
+      state.counts.added += 1;
     } catch (err) {
       const reason =
         err instanceof ResolveError || err instanceof UnresolvableError

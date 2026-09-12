@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { requireDJ } from '../utils/djGuard.js';
 import { runBulkImport, looksLikeTextAttachment } from '../library/bulkImportFlow.js';
+import { PlaylistRepo } from '../database/PlaylistRepo.js';
 
 export const data = new SlashCommandBuilder()
   .setName('import')
@@ -21,5 +22,6 @@ export async function execute(interaction) {
     return interaction.reply({ content: '❌ Нужен обычный TXT-файл.', flags: MessageFlags.Ephemeral });
   }
 
-  return runBulkImport(interaction, attachment);
+  const library = PlaylistRepo.getOrCreateLibrary();
+  return runBulkImport(interaction, attachment, library.id);
 }

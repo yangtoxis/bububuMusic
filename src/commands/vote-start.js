@@ -2,7 +2,7 @@ import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { checkVoicePreconditions } from '../utils/voiceGuards.js';
 import { isDjInVoiceChannel } from '../utils/djGuard.js';
 import { audioManager } from '../audio/AudioManager.js';
-import { TrackRepo } from '../database/TrackRepo.js';
+import { PlaylistRepo } from '../database/PlaylistRepo.js';
 import { voteManager } from '../voting/VoteManager.js';
 import { startHype } from '../audio/hypeControl.js';
 
@@ -15,7 +15,8 @@ export async function execute(interaction) {
     return interaction.reply({ content: '❌ Хайповый музон уже играет.', flags: MessageFlags.Ephemeral });
   }
 
-  if (TrackRepo.countReady() === 0) {
+  const library = PlaylistRepo.getOrCreateLibrary();
+  if (PlaylistRepo.countReady(library.id) === 0) {
     return interaction.reply({
       content: '❌ В библиотеке «Хайповый музон» пока нет треков — голосовать не за что.',
       flags: MessageFlags.Ephemeral,
@@ -27,7 +28,7 @@ export async function execute(interaction) {
 
   if (isDjInVoiceChannel(voice.voiceChannel)) {
     return interaction.reply({
-      content: 'ℹ️ В канале уже есть DJ — попроси его включить музыку через `/hype`, голосование не требуется.',
+      content: 'ℹ️ В канале уже есть DJ — попроси его включить музыку через `/play`, голосование не требуется.',
       flags: MessageFlags.Ephemeral,
     });
   }

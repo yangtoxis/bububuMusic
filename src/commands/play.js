@@ -5,7 +5,16 @@ import { startHype } from '../audio/hypeControl.js';
 
 export const data = new SlashCommandBuilder()
   .setName('play')
-  .setDescription('Включить «Хайповый музон» в твоём голосовом канале (только DJ)');
+  .setDescription('Включить музыку в твоём голосовом канале (только DJ)')
+  .addStringOption((opt) =>
+    opt
+      .setName('mode')
+      .setDescription('Режим воспроизведения')
+      .addChoices(
+        { name: '🔥 Хайповый музон', value: 'hype' },
+        { name: '🎧 Микс — плейлисты людей в канале', value: 'mix' }
+      )
+  );
 
 export async function execute(interaction) {
   const dj = requireDJ(interaction);
@@ -14,14 +23,22 @@ export async function execute(interaction) {
   const voice = checkVoicePreconditions(interaction);
   if (!voice.ok) return interaction.reply({ content: voice.message, flags: MessageFlags.Ephemeral });
 
+  const mode = interaction.options.getString('mode') ?? 'hype';
+
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const result = await startHype({
     guild: interaction.guild,
     voiceChannel: voice.voiceChannel,
     textChannel: interaction.channel,
+    mode,
   });
 
   if (!result.ok) return interaction.editReply({ content: result.message });
+
+  if (mode === 'mix') {
+    const labels = result.session.getMixSourceLabels();
+    return interaction.editReply({ content: `🎧 Микс включён!\nВ ротации: ${labels.join(', ')}` });
+  }
   return interaction.editReply({ content: '🔥 Хайповый музон включён!' });
 }

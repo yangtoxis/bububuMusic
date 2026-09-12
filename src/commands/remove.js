@@ -1,13 +1,25 @@
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { requireDJ } from '../utils/djGuard.js';
 import { requireActiveSession } from '../utils/voiceGuards.js';
-import { TrackRepo } from '../database/TrackRepo.js';
+import { PlaylistRepo } from '../database/PlaylistRepo.js';
+import { removeTrackFromPlaylist } from '../library/playlistOps.js';
 import { trackRemovedEmbed } from '../utils/embeds.js';
 import { undoRemoveRow } from '../utils/controls.js';
 
 export const data = new SlashCommandBuilder()
   .setName('remove')
-  .setDescription('Удалить играющий сейчас трек из библиотеки и пропустить его (только DJ)');
+  .setDescription('Удалить играющий сейчас трек из плейлиста, из которого он играет, и пропустить его (только DJ)');
+
+async function describePlaylist(guild, playlistId) {
+  const playlist = PlaylistRepo.getById(playlistId);
+  if (!playlist || playlist.kind === 'library') return 'библиотеки «Хайповый музон»';
+  try {
+    const member = await guild.members.fetch(playlist.owner_id);
+    return `плейлиста ${member.displayName}`;
+  } catch {
+    return 'личного плейлиста';
+  }
+}
 
 export async function execute(interaction) {
   const dj = requireDJ(interaction);
@@ -19,11 +31,20 @@ export async function execute(interaction) {
   const track = active.session.currentTrack;
   if (!track) return interaction.reply({ content: '❌ Сейчас ничего не играет.', flags: MessageFlags.Ephemeral });
 
-  TrackRepo.softRemove(track.id);
+  const playlistId = active.session.currentTrackPlaylistId;
+  if (!playlistId) {
+    return interaction.reply({
+      content: 'ℹ️ Этот трек добавлен вручную (`/add-queue`) и не привязан ни к одному плейлисту — используй `/skip`.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const playlistLabel = await describePlaylist(interaction.guild, playlistId);
+  const result = removeTrackFromPlaylist(playlistId, track.id);
   active.session.skip();
 
   return interaction.reply({
-    embeds: [trackRemovedEmbed(track)],
-    components: undoRemoveRow(track.id),
+    embeds: [trackRemovedEmbed(track, { playlistLabel })],
+    components: result.hardDeleted ? [] : undoRemoveRow(playlistId, track.id),
   });
 }

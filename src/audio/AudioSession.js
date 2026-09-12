@@ -12,6 +12,7 @@ import {
 import fs from 'node:fs';
 import { LocalFileSource } from '../sources/LocalFileSource.js';
 import { pickNextTrack, normalizeArtist } from '../library/TrackSelector.js';
+import { PlaylistRepo } from '../database/PlaylistRepo.js';
 import { GuildSettingsRepo } from '../database/GuildSettingsRepo.js';
 import { recordPlay, getRecentlyPlayed } from './recentlyPlayed.js';
 import { createLogger } from '../utils/logger.js';
@@ -29,7 +30,9 @@ export class AudioSession extends EventEmitter {
     this.voiceChannel = voiceChannel;
     this.textChannel = textChannel;
 
+    this.mode = 'hype'; // 'hype' | 'mix' - set for real in start(mode)
     this.currentTrack = null;
+    this.currentTrackPlaylistId = null; // which playlist the current track was drawn from
     this.trackStartedAt = null;
     this.upcoming = []; // materialized queue of the next tracks, always kept topped up
     this.playedStack = []; // full track objects, most-recent last - powers "previous"
@@ -39,6 +42,7 @@ export class AudioSession extends EventEmitter {
     this._consecutiveFailures = 0;
     this._destroyed = false;
     this._source = null;
+    this._mixRotationIndex = 0;
 
     this.volume = GuildSettingsRepo.get(guild.id).volume;
 
@@ -100,38 +104,110 @@ export class AudioSession extends EventEmitter {
     });
   }
 
-  async start() {
+  async start(mode = 'hype') {
+    this.mode = mode;
     await entersState(this.connection, VoiceConnectionStatus.Ready, 20_000);
     this._fillQueue();
     await this._advance();
   }
 
+  // Who the "Микс" rotation currently draws from: the shared library
+  // playlist, plus every non-bot member in the channel who has tracks in
+  // their own personal playlist. Recomputed on demand (not cached) so
+  // someone joining/leaving mid-session is reflected in future picks
+  // without any extra event wiring.
+  _computeMixSources() {
+    const library = PlaylistRepo.getOrCreateLibrary();
+    const sources = [{ playlistId: library.id, label: '🔥 Хайповый музон' }];
+
+    for (const member of this.voiceChannel.members.values()) {
+      if (member.user.bot) continue;
+      const personal = PlaylistRepo.getPersonal(member.id);
+      if (!personal) continue;
+      if (PlaylistRepo.countReady(personal.id) === 0) continue;
+      sources.push({ playlistId: personal.id, label: `🎧 ${member.displayName}` });
+    }
+
+    return sources;
+  }
+
+  // Guild-facing summary of who's currently in the mix rotation, for the
+  // /play confirmation message.
+  getMixSourceLabels() {
+    return this._computeMixSources().map((s) => s.label);
+  }
+
   _fillQueue() {
+    if (this.mode === 'mix') this._fillQueueMix();
+    else this._fillQueueHype();
+  }
+
+  _fillQueueHype() {
+    const library = PlaylistRepo.getOrCreateLibrary();
     while (this.upcoming.length < QUEUE_LOOKAHEAD) {
-      // Exclude the last few actually-played tracks (persists across a
-      // /stop + /play cycle, see recentlyPlayed.js) plus whatever's already
-      // queued. Ordered with the most immediate one (currentTrack) last -
-      // pickNextTrack's small-library fallback relaxes older exclusions
-      // first and keeps protecting the most recent one the longest.
-      const historyIds = this._history.map((h) => h.id);
-      const excludeTrackIds = [...historyIds, ...this.upcoming.map((t) => t.id), this.currentTrack?.id].filter(
-        Boolean
-      );
-      // Only look at the artist(s) immediately preceding the slot being
-      // filled - either the tail of what's already queued, or actual play
-      // history if the queue is still empty. Using the *whole* queue built
-      // so far instead of just its tail self-defeats once every artist in
-      // a small library is already represented in it (the filter would
-      // exclude everything and fall back to no filter at all, right at the
-      // position most likely to land a same-artist repeat).
-      const recentArtists =
-        this.upcoming.length > 0
-          ? this.upcoming.slice(-RECENT_ARTIST_WINDOW).map((t) => normalizeArtist(t.artist))
-          : this._history.slice(0, RECENT_ARTIST_WINDOW).map((h) => h.artist);
-      const pick = pickNextTrack({ excludeTrackIds, recentArtists });
+      const pick = pickNextTrack({
+        playlistId: library.id,
+        excludeTrackIds: this._buildExcludeIds(),
+        recentArtists: this._buildRecentArtists(),
+      });
       if (!pick) break; // library empty or exhausted
+      pick._sourcePlaylistId = library.id;
+      pick._sourceLabel = '🔥 Хайповый музон';
       this.upcoming.push(pick);
     }
+  }
+
+  // Round-robins through the library + everyone's personal playlist for
+  // each new slot. The global exclude/recent-artist sets (spanning history
+  // + whatever's already queued, regardless of which playlist it came
+  // from) are what keep the *same track* from repeating even when it
+  // happens to sit in two different people's playlists at once.
+  _fillQueueMix() {
+    const sources = this._computeMixSources();
+    if (sources.length === 0) return;
+
+    let consecutiveMisses = 0;
+    while (this.upcoming.length < QUEUE_LOOKAHEAD && consecutiveMisses < sources.length) {
+      const source = sources[this._mixRotationIndex % sources.length];
+      this._mixRotationIndex += 1;
+
+      const pick = pickNextTrack({
+        playlistId: source.playlistId,
+        excludeTrackIds: this._buildExcludeIds(),
+        recentArtists: this._buildRecentArtists(),
+      });
+      if (!pick) {
+        consecutiveMisses += 1;
+        continue;
+      }
+      consecutiveMisses = 0;
+      pick._sourcePlaylistId = source.playlistId;
+      pick._sourceLabel = source.label;
+      this.upcoming.push(pick);
+    }
+  }
+
+  // Exclude the last few actually-played tracks (persists across a
+  // /stop + /play cycle, see recentlyPlayed.js) plus whatever's already
+  // queued. Ordered with the most immediate one (currentTrack) last -
+  // pickNextTrack's small-playlist fallback relaxes older exclusions first
+  // and keeps protecting the most recent one the longest.
+  _buildExcludeIds() {
+    const historyIds = this._history.map((h) => h.id);
+    return [...historyIds, ...this.upcoming.map((t) => t.id), this.currentTrack?.id].filter(Boolean);
+  }
+
+  // Only look at the artist(s) immediately preceding the slot being filled
+  // - either the tail of what's already queued, or actual play history if
+  // the queue is still empty. Using the *whole* queue built so far instead
+  // of just its tail self-defeats once every artist in a small playlist is
+  // already represented in it (the filter would exclude everything and
+  // fall back to no filter at all, right at the position most likely to
+  // land a same-artist repeat).
+  _buildRecentArtists() {
+    return this.upcoming.length > 0
+      ? this.upcoming.slice(-RECENT_ARTIST_WINDOW).map((t) => normalizeArtist(t.artist))
+      : this._history.slice(0, RECENT_ARTIST_WINDOW).map((h) => h.artist);
   }
 
   async _advance() {
@@ -174,6 +250,7 @@ export class AudioSession extends EventEmitter {
     }
 
     this.currentTrack = track;
+    this.currentTrackPlaylistId = track._sourcePlaylistId ?? null;
     this.trackStartedAt = Date.now();
     this._recordHistory(track);
 

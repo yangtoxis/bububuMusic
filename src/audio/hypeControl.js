@@ -1,14 +1,15 @@
-import { TrackRepo } from '../database/TrackRepo.js';
+import { PlaylistRepo } from '../database/PlaylistRepo.js';
 import { audioManager } from './AudioManager.js';
 
-// Shared by /hype, the panel buttons and both vote outcomes so there is
+// Shared by /play, the panel buttons and both vote outcomes so there is
 // exactly one place that decides whether the station is allowed to start.
-export async function startHype({ guild, voiceChannel, textChannel }) {
+export async function startHype({ guild, voiceChannel, textChannel, mode = 'hype' }) {
   if (audioManager.has(guild.id)) {
     return { ok: false, message: 'Хайповый музон уже играет.' };
   }
 
-  if (TrackRepo.countReady() === 0) {
+  const library = PlaylistRepo.getOrCreateLibrary();
+  if (PlaylistRepo.countReady(library.id) === 0) {
     return {
       ok: false,
       message: 'В библиотеке «Хайповый музон» пока нет треков. Добавь их командой `/add`.',
@@ -17,7 +18,7 @@ export async function startHype({ guild, voiceChannel, textChannel }) {
 
   const session = audioManager.getOrCreate({ guild, voiceChannel, textChannel });
   try {
-    await session.start();
+    await session.start(mode);
   } catch (err) {
     session.destroy('start_failed');
     return { ok: false, message: `❌ Не удалось подключиться к голосовому каналу: ${err.message}` };

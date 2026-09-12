@@ -9,6 +9,7 @@ fs.mkdirSync(env.importsDir, { recursive: true });
 
 export const db = new Database(env.dbPath);
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS tracks (
@@ -60,6 +61,30 @@ CREATE TABLE IF NOT EXISTS guild_dj_roles (
   role_id TEXT NOT NULL,
   PRIMARY KEY (guild_id, role_id)
 );
+
+-- A track's membership in a playlist is many-to-many: the same downloaded
+-- file can belong to the shared "library" playlist (kind='library', a
+-- single global row) AND to any number of personal playlists (kind=
+-- 'personal', one per owner_id = Discord user id - never the display name,
+-- which can change). Removing a track from one playlist never touches
+-- another playlist that also references it; a track is only ever fully
+-- deleted (row + file) once its last playlist_tracks reference is gone -
+-- see library/playlistOps.js.
+CREATE TABLE IF NOT EXISTS playlists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL CHECK(kind IN ('library', 'personal')),
+  owner_id TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_playlists_kind_owner ON playlists(kind, COALESCE(owner_id, ''));
+
+CREATE TABLE IF NOT EXISTS playlist_tracks (
+  playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+  track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+  added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (playlist_id, track_id)
+);
+CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(track_id);
 `);
 
 export function migrateColumn(table, column, definition) {
@@ -69,8 +94,17 @@ export function migrateColumn(table, column, definition) {
   }
 }
 
-// in_library=0 marks a track that was resolved only for /add-queue (a one-off
-// play, not part of the permanent "Хайповый музон" pool the shuffler draws
-// from). thumbnail_url is best-effort metadata from the resolver.
+// in_library is legacy (kept only so old rows aren't touched) - playlist
+// membership is now the single source of truth, via playlist_tracks.
 migrateColumn('tracks', 'in_library', 'INTEGER NOT NULL DEFAULT 1');
 migrateColumn('tracks', 'thumbnail_url', 'TEXT');
+
+// One-time (idempotent) backfill: every track that used to be flagged
+// in_library=1 becomes a member of the single "library" playlist.
+db.exec(`
+  INSERT OR IGNORE INTO playlists (kind, owner_id) VALUES ('library', NULL);
+  INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id)
+    SELECT (SELECT id FROM playlists WHERE kind = 'library'), id
+    FROM tracks
+    WHERE in_library = 1;
+`);

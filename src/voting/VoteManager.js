@@ -119,7 +119,7 @@ class VoteManager {
       if (kind === 'start' && !wasInChannel && nowInChannel) {
         const voiceChannel = newState.guild.channels.cache.get(state.voiceChannelId);
         if (isDjInVoiceChannel(voiceChannel)) {
-          await this._cancel(key, '❌ Голосование отменено: в канал зашёл DJ. Используй `/hype`, чтобы включить музыку напрямую.');
+          await this._cancel(key, '❌ Голосование отменено: в канал зашёл DJ. Используй `/play`, чтобы включить музыку напрямую.');
           continue;
         }
       }

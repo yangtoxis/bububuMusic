@@ -1,6 +1,7 @@
 import { ContextMenuCommandBuilder, ApplicationCommandType, MessageFlags } from 'discord.js';
 import { requireDJ } from '../utils/djGuard.js';
 import { runBulkImport, looksLikeTextAttachment } from '../library/bulkImportFlow.js';
+import { PlaylistRepo } from '../database/PlaylistRepo.js';
 
 // A message-context-menu command (right-click a message → Apps →
 // "Импортировать треки из TXT") rather than a slash-command option, so
@@ -24,5 +25,6 @@ export async function execute(interaction) {
     });
   }
 
-  return runBulkImport(interaction, attachment);
+  const library = PlaylistRepo.getOrCreateLibrary();
+  return runBulkImport(interaction, attachment, library.id);
 }

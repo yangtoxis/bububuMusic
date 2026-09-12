@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import { MessageFlags } from 'discord.js';
 import { requireDJ } from '../utils/djGuard.js';
 import { requireActiveSession } from '../utils/voiceGuards.js';
@@ -6,10 +5,8 @@ import { trackAnnouncementEmbed, queueEmbed } from '../utils/embeds.js';
 import { playerControlRows, queueShuffleRow } from '../utils/controls.js';
 import { stopHype } from '../audio/hypeControl.js';
 import { voteManager } from '../voting/VoteManager.js';
-import { TrackRepo } from '../database/TrackRepo.js';
-import { createLogger } from '../utils/logger.js';
+import { removeTrackFromPlaylist, restoreTrackToPlaylist } from '../library/playlistOps.js';
 
-const logger = createLogger({ module: 'buttonHandler' });
 const VOLUME_STEP = 10;
 
 export async function handleButton(interaction) {
@@ -77,28 +74,25 @@ async function handleVoteButton(interaction) {
 }
 
 async function handleTrackButton(interaction) {
-  const [, action, rawId] = interaction.customId.split(':');
-  const trackId = Number.parseInt(rawId, 10);
+  const [, action, rawPlaylistId, rawTrackId] = interaction.customId.split(':');
+  const playlistId = Number.parseInt(rawPlaylistId, 10);
+  const trackId = Number.parseInt(rawTrackId, 10);
 
   const dj = requireDJ(interaction);
   if (!dj.ok) return interaction.reply({ content: dj.message, flags: MessageFlags.Ephemeral });
 
-  if (action === 'undo-add') {
-    const track = TrackRepo.getById(trackId);
-    if (!track) return interaction.reply({ content: 'ℹ️ Этот трек уже удалён.', flags: MessageFlags.Ephemeral });
-
-    TrackRepo.deleteById(trackId);
-    if (track.file_path) {
-      fs.promises.unlink(track.file_path).catch((err) => {
-        if (err.code !== 'ENOENT') logger.warn('failed to unlink undone track file', { error: err.message });
-      });
-    }
-    return interaction.update({ content: `↩️ Добавление отменено, трек удалён.`, embeds: [], components: [] });
+  if (action === 'unlink') {
+    const result = removeTrackFromPlaylist(playlistId, trackId);
+    const note = result.hardDeleted ? ' (файл удалён, т.к. это был последний плейлист с этим треком)' : '';
+    return interaction.update({ content: `↩️ Добавление отменено.${note}`, embeds: [], components: [] });
   }
 
-  if (action === 'undo-remove') {
-    TrackRepo.restore(trackId);
-    return interaction.update({ content: '♻️ Трек восстановлен в библиотеке.', embeds: [], components: [] });
+  if (action === 'relink') {
+    const result = restoreTrackToPlaylist(playlistId, trackId);
+    if (!result.ok) {
+      return interaction.reply({ content: '❌ Трек больше не существует, восстановить нельзя.', flags: MessageFlags.Ephemeral });
+    }
+    return interaction.update({ content: '♻️ Трек восстановлен в плейлисте.', embeds: [], components: [] });
   }
 
   return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral });

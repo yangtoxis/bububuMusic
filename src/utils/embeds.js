@@ -5,7 +5,8 @@ const HYPE_COLOR = 0xff4d4d;
 
 export function trackAnnouncementEmbed(session) {
   const track = session?.currentTrack;
-  const embed = new EmbedBuilder().setColor(HYPE_COLOR).setTitle('🔥 ХАЙПОВЫЙ МУЗОН');
+  const title = session?.mode === 'mix' ? '🎧 МИКС' : '🔥 ХАЙПОВЫЙ МУЗОН';
+  const embed = new EmbedBuilder().setColor(HYPE_COLOR).setTitle(title);
 
   if (!track) {
     embed.setDescription('Сейчас ничего не играет.');
@@ -18,6 +19,9 @@ export function trackAnnouncementEmbed(session) {
   const fields = [{ name: 'Громкость', value: `${session.volume}%`, inline: true }];
   if (track.duration_seconds) {
     fields.push({ name: 'Длительность', value: formatDuration(track.duration_seconds), inline: true });
+  }
+  if (session?.mode === 'mix' && track._sourceLabel) {
+    fields.push({ name: 'Из плейлиста', value: track._sourceLabel, inline: true });
   }
   embed.addFields(fields);
   embed.setFooter({ text: session.isPaused ? '⏸️ На паузе' : '▶️ Играет' });
@@ -36,7 +40,8 @@ export function queueEmbed(session) {
 
   const lines = upcoming.map((t, i) => {
     const duration = t.duration_seconds ? ` (${formatDuration(t.duration_seconds)})` : '';
-    return `**${i + 1}.** ${trackLabel(t)}${duration}`;
+    const source = session.mode === 'mix' && t._sourceLabel ? ` — _${t._sourceLabel}_` : '';
+    return `**${i + 1}.** ${trackLabel(t)}${duration}${source}`;
   });
   embed.setDescription(lines.join('\n'));
   return embed;
@@ -57,18 +62,18 @@ export function importSummaryEmbed(counts, { title = 'Импорт библио�
     );
 }
 
-export function trackAddedEmbed(track, { alreadyExisted = false } = {}) {
+export function trackAddedEmbed(track, { alreadyInPlaylist = false, playlistLabel = 'библиотеку «Хайповый музон»' } = {}) {
   return new EmbedBuilder()
-    .setColor(alreadyExisted ? 0xfee75c : 0x57f287)
-    .setTitle(alreadyExisted ? 'ℹ️ Трек уже есть в библиотеке' : '✅ Трек добавлен в «Хайповый музон»')
+    .setColor(alreadyInPlaylist ? 0xfee75c : 0x57f287)
+    .setTitle(alreadyInPlaylist ? 'ℹ️ Трек уже есть в плейлисте' : `✅ Трек добавлен в ${playlistLabel}`)
     .setDescription(`**${trackLabel(track)}**`)
     .setThumbnail(track.thumbnail_url || null);
 }
 
-export function trackRemovedEmbed(track) {
+export function trackRemovedEmbed(track, { playlistLabel = 'библиотеки' } = {}) {
   return new EmbedBuilder()
     .setColor(0xed4245)
-    .setTitle('🗑️ Трек удалён из библиотеки')
+    .setTitle(`🗑️ Трек удалён из ${playlistLabel}`)
     .setDescription(`**${trackLabel(track)}**`);
 }
 

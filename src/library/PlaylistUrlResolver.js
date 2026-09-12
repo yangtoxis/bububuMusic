@@ -1,11 +1,10 @@
 import { spawn } from 'node:child_process';
 import {
-  fetchHtml,
   fetchHtmlWithRetry,
   fetchOgMeta,
   fetchSoundCloudMeta,
-  splitArtistFromDescription,
-  decodeHtmlEntities,
+  fetchYandexApi,
+  yandexTrackToItem,
   UnresolvableError,
 } from './TrackResolver.js';
 import { createLogger } from '../utils/logger.js';
@@ -63,82 +62,48 @@ async function resolveSpotifyPlaylist(url) {
   return items;
 }
 
-// Only album pages (and some curated playlists) embed the full track list
-// in their schema.org JSON-LD block. Large/personal playlists (e.g. "Мне
-// нравится" liked-tracks share links) only put summary info there
-// (numTracks, no `tracks` array) - the actual per-track data instead lives
-// scattered through the page's Next.js hydration state, one object per
-// track carrying its own "title" plus a "realId"/"artists" a bit further
-// along. There's no clean single JSON blob to parse (React streams it in
-// pieces), so this walks each "realId" occurrence and pulls the nearest
-// preceding title / following artist name out of the surrounding text
-// instead of a full parse.
-function extractTracksFromHydrationState(html) {
-  const items = [];
-  const realIdRe = /"realId":"\d+"/g;
-  let match;
-  while ((match = realIdRe.exec(html))) {
-    const before = html.slice(Math.max(0, match.index - 600), match.index);
-    const titleMatches = [...before.matchAll(/"title":"((?:[^"\\]|\\.)*)"/g)];
-    const titleRaw = titleMatches.at(-1)?.[1];
-    if (!titleRaw) continue;
+// Component extractors for the three Yandex Music URL shapes that reach
+// here - checked in this order since a named user playlist URL also
+// contains "/playlists/<id>" and would otherwise match the share-link
+// pattern too.
+const YANDEX_ALBUM_ID_RE = /music\.yandex\.(?:ru|com|by|kz|uz)\/album\/(\d+)/i;
+const YANDEX_USER_PLAYLIST_RE = /music\.yandex\.(?:ru|com|by|kz|uz)\/users\/([^/]+)\/playlists\/(\d+)/i;
+const YANDEX_SHARE_PLAYLIST_RE = /music\.yandex\.(?:ru|com|by|kz|uz)\/playlists\/([\w.-]+)/i;
 
-    const after = html.slice(match.index, match.index + 500);
-    const artistRaw = after.match(/"artists":\[\{"id":"[^"]*","name":"((?:[^"\\]|\\.)*)"/)?.[1] ?? '';
-
-    const title = decodeHtmlEntities(JSON.parse(`"${titleRaw}"`));
-    const artist = artistRaw ? decodeHtmlEntities(JSON.parse(`"${artistRaw}"`)) : '';
-    items.push({ raw: artist ? `${artist} - ${title}` : title, artist, title });
-  }
-  return items;
+function toItem(track, fallbackArtist) {
+  const { artist, title } = yandexTrackToItem(track, fallbackArtist);
+  return { raw: artist ? `${artist} - ${title}` : title, artist, title };
 }
 
 async function resolveYandexPlaylist(url) {
-  // og:title is present on every real (server-rendered) Yandex Music page
-  // regardless of type - the most reliable single signal that this isn't
-  // the stripped client-shell variant.
-  const html = await fetchHtmlWithRetry(url, (h) => /<meta property="og:title"/.test(h));
-  const ldMatch = html.match(/<script type="application\/ld\+json">(.*?)<\/script>/s);
-  if (!ldMatch) {
-    throw new UnresolvableError('Не удалось найти список треков на странице Яндекс Музыки.');
-  }
-
-  let data;
-  try {
-    data = JSON.parse(ldMatch[1]);
-  } catch {
-    throw new UnresolvableError('Не удалось разобрать данные страницы Яндекс Музыки.');
-  }
-
-  const ldTracks = Array.isArray(data.tracks) ? data.tracks : [];
-
-  if (ldTracks.length > 0) {
-    // A single-artist album's page-level og:description reliably names the
-    // artist ("Artist • Альбом • Год") - reuse it for every track. A
-    // user-curated playlist can mix artists, so we deliberately don't guess
-    // one there and let each track resolve by title alone.
-    let sharedArtist = '';
-    if (data['@type'] === 'MusicAlbum') {
-      const ogDescription = html.match(/<meta property="og:description" content="([^"]*)"/)?.[1];
-      sharedArtist = splitArtistFromDescription(decodeHtmlEntities(ogDescription || ''));
+  const albumMatch = url.match(YANDEX_ALBUM_ID_RE);
+  if (albumMatch) {
+    const album = await fetchYandexApi(`albums/${albumMatch[1]}/with-tracks`);
+    const albumArtist = (album.artists || []).map((a) => a.name).filter(Boolean).join(', ');
+    const tracks = (album.volumes || []).flat();
+    if (tracks.length === 0) {
+      throw new UnresolvableError('Не удалось найти треки в этом альбоме Яндекс Музыки.');
     }
-
-    return ldTracks
-      .slice(0, PLAYLIST_ITEM_LIMIT)
-      .map((t) => decodeHtmlEntities(t.name || '').trim())
-      .filter(Boolean)
-      .map((title) => ({
-        raw: sharedArtist ? `${sharedArtist} - ${title}` : title,
-        artist: sharedArtist,
-        title,
-      }));
+    return tracks.slice(0, PLAYLIST_ITEM_LIMIT).map((t) => toItem(t, albumArtist));
   }
 
-  const items = extractTracksFromHydrationState(html).slice(0, PLAYLIST_ITEM_LIMIT);
-  if (items.length === 0) {
-    throw new UnresolvableError('Не удалось найти треки на этой странице Яндекс Музыки.');
+  const userPlaylistMatch = url.match(YANDEX_USER_PLAYLIST_RE);
+  const sharePlaylistMatch = url.match(YANDEX_SHARE_PLAYLIST_RE);
+  const apiPath = userPlaylistMatch
+    ? `users/${userPlaylistMatch[1]}/playlists/${userPlaylistMatch[2]}`
+    : sharePlaylistMatch
+      ? `playlist/${sharePlaylistMatch[1]}`
+      : null;
+  if (!apiPath) {
+    throw new UnresolvableError('Не удалось распознать эту ссылку на Яндекс Музыку.');
   }
-  return items;
+
+  const playlist = await fetchYandexApi(apiPath);
+  const entries = Array.isArray(playlist.tracks) ? playlist.tracks : [];
+  if (entries.length === 0) {
+    throw new UnresolvableError('Не удалось найти треки в этом плейлисте Яндекс Музыки.');
+  }
+  return entries.slice(0, PLAYLIST_ITEM_LIMIT).map((entry) => toItem(entry.track || entry));
 }
 
 function runYtDlpFlatPlaylist(url, timeoutMs) {

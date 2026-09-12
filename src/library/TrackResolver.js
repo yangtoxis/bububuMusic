@@ -9,7 +9,7 @@ const logger = createLogger({ module: 'TrackResolver' });
 
 const YOUTUBE_ID_RE = /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|shorts\/|embed\/|live\/))([\w-]{11})/i;
 const SPOTIFY_URL_RE = /open\.spotify\.com\/(?:intl-\w+\/)?track\//i;
-const YANDEX_URL_RE = /music\.yandex\.(ru|com|by|kz|uz)\/album\/\d+\/track\/\d+/i;
+const YANDEX_TRACK_URL_RE = /music\.yandex\.(ru|com|by|kz|uz)\/album\/\d+\/track\/(\d+)/i;
 const SOUNDCLOUD_URL_RE = /soundcloud\.com\/[^/?#]+\/(?!sets\/)[^/?#]+/i;
 const URL_RE = /^https?:\/\//i;
 
@@ -57,6 +57,11 @@ const MIN_HOST_INTERVAL_MS = {
   'music.yandex.by': 4000,
   'music.yandex.kz': 4000,
   'music.yandex.uz': 4000,
+  'api.music.yandex.ru': 4000,
+  'api.music.yandex.com': 4000,
+  'api.music.yandex.by': 4000,
+  'api.music.yandex.kz': 4000,
+  'api.music.yandex.uz': 4000,
 };
 const DEFAULT_HOST_INTERVAL_MS = 500;
 
@@ -189,6 +194,48 @@ export async function fetchSoundCloudMeta(url) {
   return { title: title.replace(prefixRe, '').trim() || title, artist };
 }
 
+// The actual API Yandex Music's own public embed widget
+// (music.yandex.ru/iframe/album/...) calls to fetch track data - found by
+// reading that widget's own config (window.APP_CONFIG.resource.
+// musicExternalApi). Structured JSON, no HTML scraping/regex needed, and
+// it isn't subject to the same anti-bot page-stripping the main site
+// showed under load - this is the real fix, not a workaround. Still goes
+// through fetchHtml (curl + the same per-host throttle) since it's the
+// same property and worth being just as conservative with.
+const YANDEX_API_BASE = 'https://api.music.yandex.ru';
+
+export async function fetchYandexApi(path) {
+  const body = await fetchHtml(`${YANDEX_API_BASE}/${path}`);
+  let data;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    throw new UnresolvableError('Не удалось разобрать ответ API Яндекс Музыки.');
+  }
+  if (data.error) {
+    throw new UnresolvableError(`Яндекс Музыка: ${data.error.message || data.error.name}`);
+  }
+  return data.result;
+}
+
+// Yandex sometimes stores a remix/edit tag ("slowed", "sped up", ...)
+// separately from the title instead of folding it in - keep it in the
+// search query so the right variant gets found on YouTube.
+export function yandexTrackToItem(track, fallbackArtist = '') {
+  const artist = (track.artists || []).map((a) => a.name).filter(Boolean).join(', ') || fallbackArtist;
+  const title = track.version ? `${track.title} (${track.version})` : track.title;
+  return { artist, title, durationSeconds: track.durationMs ? Math.round(track.durationMs / 1000) : null };
+}
+
+export async function fetchYandexTrackMeta(trackId) {
+  const result = await fetchYandexApi(`tracks/${trackId}`);
+  const track = Array.isArray(result) ? result[0] : result;
+  if (!track) {
+    throw new UnresolvableError('Не удалось найти этот трек в Яндекс Музыке.');
+  }
+  return yandexTrackToItem(track);
+}
+
 export function decodeHtmlEntities(text) {
   return text
     .replace(/&amp;/g, '&')
@@ -262,8 +309,9 @@ export async function resolveTrackRequest(input, { addedBy, playlistId = null } 
   } else if (SPOTIFY_URL_RE.test(trimmed)) {
     const meta = await fetchOgMeta(trimmed, 'Spotify');
     result = await resolveBySearch({ artist: meta.artist, title: meta.title, addedBy });
-  } else if (YANDEX_URL_RE.test(trimmed)) {
-    const meta = await fetchOgMeta(trimmed, 'Яндекс Музыки');
+  } else if (YANDEX_TRACK_URL_RE.test(trimmed)) {
+    const trackId = trimmed.match(YANDEX_TRACK_URL_RE)[2];
+    const meta = await fetchYandexTrackMeta(trackId);
     result = await resolveBySearch({ artist: meta.artist, title: meta.title, addedBy });
   } else if (SOUNDCLOUD_URL_RE.test(trimmed)) {
     const meta = await fetchSoundCloudMeta(trimmed);

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { env } from '../config/env.js';
 import { TrackRepo, normalizeDedupKey } from '../database/TrackRepo.js';
 import { PlaylistRepo } from '../database/PlaylistRepo.js';
 import { resolveAndDownloadTrack } from './YtDlpResolver.js';
@@ -131,10 +132,10 @@ function curlGet(url, headers = {}) {
   });
 }
 
-export async function fetchHtml(url) {
+export async function fetchHtml(url, extraHeaders = {}) {
   const hostname = new URL(url).hostname;
   await throttleHost(hostname);
-  const { status, body } = await curlGet(url, { 'User-Agent': BOT_UA });
+  const { status, body } = await curlGet(url, { 'User-Agent': BOT_UA, ...extraHeaders });
 
   if (status === 429 || status === 403) {
     throw new UnresolvableError(
@@ -205,7 +206,13 @@ export async function fetchSoundCloudMeta(url) {
 const YANDEX_API_BASE = 'https://api.music.yandex.ru';
 
 export async function fetchYandexApi(path) {
-  const body = await fetchHtml(`${YANDEX_API_BASE}/${path}`);
+  // Authenticated requests read as a real client using the API, not an
+  // anonymous scraper - markedly less likely to get anti-bot-flagged. See
+  // env.yandexMusicToken for how to obtain one; works fine without it too,
+  // just more exposed to the anti-bot heuristics that motivated this in
+  // the first place.
+  const headers = env.yandexMusicToken ? { Authorization: `OAuth ${env.yandexMusicToken}` } : {};
+  const body = await fetchHtml(`${YANDEX_API_BASE}/${path}`, headers);
   let data;
   try {
     data = JSON.parse(body);

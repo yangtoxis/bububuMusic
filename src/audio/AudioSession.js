@@ -15,6 +15,7 @@ import { pickNextTrack, normalizeArtist } from '../library/TrackSelector.js';
 import { PlaylistRepo } from '../database/PlaylistRepo.js';
 import { GuildSettingsRepo } from '../database/GuildSettingsRepo.js';
 import { recordPlay, getRecentlyPlayed } from './recentlyPlayed.js';
+import { ListeningStatsRepo } from '../database/ListeningStatsRepo.js';
 import { createLogger } from '../utils/logger.js';
 
 export const QUEUE_LOOKAHEAD = 5;
@@ -22,6 +23,7 @@ const HISTORY_SIZE = 8;
 const RECENT_ARTIST_WINDOW = 2;
 const MAX_CONSECUTIVE_FAILURES = 5;
 const PLAYED_STACK_SIZE = 20;
+const LISTENING_TICK_MS = 60_000;
 
 export class AudioSession extends EventEmitter {
   constructor({ guild, voiceChannel, textChannel }) {
@@ -59,6 +61,8 @@ export class AudioSession extends EventEmitter {
       behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
     });
     this.connection.subscribe(this.player);
+
+    this._listeningInterval = setInterval(() => this._tickListening(), LISTENING_TICK_MS);
 
     this._wireConnection();
     this._wirePlayer();
@@ -350,11 +354,24 @@ export class AudioSession extends EventEmitter {
     return Math.floor((Date.now() - this.trackStartedAt) / 1000);
   }
 
+  // Credits every non-bot member currently in the channel with one tick of
+  // listening time - only while an actual track is playing (not paused),
+  // so a stalled reconnect or a silent empty session doesn't rack up time.
+  _tickListening() {
+    if (this._destroyed || !this.currentTrack || this.isPaused) return;
+    const seconds = LISTENING_TICK_MS / 1000;
+    for (const member of this.voiceChannel.members.values()) {
+      if (member.user.bot) continue;
+      ListeningStatsRepo.addSeconds(this.guild.id, member.id, seconds);
+    }
+  }
+
   destroy(reason = 'manual') {
     if (this._destroyed) return;
     this._destroyed = true;
     this.logger.info('destroying session', { reason });
 
+    clearInterval(this._listeningInterval);
     if (this._source) this._source.destroy();
     try {
       this.player.stop(true);

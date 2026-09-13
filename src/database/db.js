@@ -85,6 +85,14 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
   PRIMARY KEY (playlist_id, track_id)
 );
 CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(track_id);
+
+CREATE TABLE IF NOT EXISTS listening_stats (
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  seconds_listened INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (guild_id, user_id)
+);
 `);
 
 export function migrateColumn(table, column, definition) {

@@ -24,10 +24,9 @@ const YANDEX_ALBUM_ONLY_RE = /music\.yandex\.(ru|com|by|kz|uz)\/album\/\d+\/?(?:
 const YANDEX_PLAYLIST_RE = /music\.yandex\.(ru|com|by|kz|uz)\/(?:users\/[^/]+\/)?playlists\/[\w.-]+/i;
 const SOUNDCLOUD_SET_RE = /soundcloud\.com\/[^/?#]+\/sets\/[^/?#]+/i;
 
-// Public scraping only exposes the first page of a large playlist either
-// way (Spotify's own og:meta caps around here) - stay well within that
-// rather than hammering dozens of individual track pages.
-const PLAYLIST_ITEM_LIMIT = 60;
+// Upper bound so one runaway link can't queue an unbounded background job
+// - well above any playlist size we actually expect to see in practice.
+const PLAYLIST_ITEM_LIMIT = 500;
 
 export function detectPlaylistUrl(text) {
   const trimmed = (text || '').trim();

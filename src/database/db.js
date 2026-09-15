@@ -62,6 +62,12 @@ CREATE TABLE IF NOT EXISTS guild_dj_roles (
   PRIMARY KEY (guild_id, role_id)
 );
 
+CREATE TABLE IF NOT EXISTS guild_moderator_roles (
+  guild_id TEXT NOT NULL,
+  role_id TEXT NOT NULL,
+  PRIMARY KEY (guild_id, role_id)
+);
+
 -- A track's membership in a playlist is many-to-many: the same downloaded
 -- file can belong to the shared "library" playlist (kind='library', a
 -- single global row) AND to any number of personal playlists (kind=

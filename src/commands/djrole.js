@@ -1,5 +1,6 @@
 import { SlashCommandBuilder, PermissionsBitField, MessageFlags } from 'discord.js';
 import { DjRoleRepo } from '../database/DjRoleRepo.js';
+import { isModerator } from '../utils/modGuard.js';
 
 export const data = new SlashCommandBuilder()
   .setName('djrole')
@@ -20,9 +21,9 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((sub) => sub.setName('list').setDescription('Показать текущие роли DJ'));
 
 export async function execute(interaction) {
-  if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+  if (!isModerator(interaction.member)) {
     return interaction.reply({
-      content: '❌ Настраивать роли DJ может только тот, у кого есть право «Управление сервером».',
+      content: '❌ Настраивать роли DJ может только модератор или тот, у кого есть право «Управление сервером».',
       flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
     });
   }

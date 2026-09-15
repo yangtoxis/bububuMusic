@@ -54,7 +54,7 @@ export async function execute(interaction) {
   const sub = interaction.options.getSubcommand();
   const personal = PlaylistRepo.getOrCreatePersonal(interaction.user.id);
 
-  if (sub === 'add') return handleAdd(interaction, personal);
+  if (sub === 'add') return handleAdd(interaction, personal, interaction.options.getString('track', true));
   if (sub === 'import') return handleImport(interaction, personal);
   if (sub === 'status') return handleStatus(interaction, personal);
   if (sub === 'clear') return handleClear(interaction, personal);
@@ -76,9 +76,10 @@ export async function autocomplete(interaction) {
   return interaction.respond(matches);
 }
 
-async function handleAdd(interaction, personal) {
-  const trackQuery = interaction.options.getString('track', true);
-
+// Exported so the "Добавить плейлист" button in Микс mode (anyone can use
+// it - see buttonHandler.js/modalHandler.js) can add to the clicking
+// user's personal playlist via a modal, without duplicating this logic.
+export async function handleAdd(interaction, personal, trackQuery) {
   const playlistUrl = detectPlaylistUrl(trackQuery);
   if (playlistUrl) {
     return runPlaylistUrlImport(interaction, playlistUrl, personal.id);

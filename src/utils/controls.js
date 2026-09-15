@@ -20,6 +20,15 @@ export function playerControlRows(session) {
     new ButtonBuilder().setCustomId('ctrl:volup').setStyle(ButtonStyle.Secondary).setEmoji('🔊')
   );
 
+  // Only in Микс mode - everyone's personal playlist feeds the rotation
+  // there, so unlike every other control here this one is open to anyone,
+  // not just DJs (see buttonHandler.js: 'padd' isn't DJ-gated).
+  if (session?.mode === 'mix') {
+    volumeRow.addComponents(
+      new ButtonBuilder().setCustomId('padd:open').setStyle(ButtonStyle.Success).setLabel('➕ Добавить плейлист')
+    );
+  }
+
   const rows = [transportRow, volumeRow];
 
   const track = session?.currentTrack;

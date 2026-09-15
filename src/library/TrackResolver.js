@@ -63,6 +63,12 @@ const MIN_HOST_INTERVAL_MS = {
   'api.music.yandex.by': 4000,
   'api.music.yandex.kz': 4000,
   'api.music.yandex.uz': 4000,
+  // A large Spotify playlist import fetches one page per track in a tight
+  // sequential loop (resolveSpotifyPlaylist) - at the old 500ms default
+  // that was fast enough to trip Spotify's own rate limiting partway
+  // through, silently dropping the rest of the tracks (each failed fetch
+  // is caught and skipped, not surfaced as an overall import failure).
+  'open.spotify.com': 1200,
 };
 const DEFAULT_HOST_INTERVAL_MS = 500;
 
@@ -132,20 +138,38 @@ function curlGet(url, headers = {}) {
   });
 }
 
-export async function fetchHtml(url, extraHeaders = {}) {
+// A 429/403 mid-way through a big sequential import (one request per track)
+// used to fail that single item outright with no retry - on a large
+// playlist that silently drops a large chunk of it instead of just being
+// slower. A short backoff-and-retry turns a transient rate-limit blip back
+// into "just took a bit longer", which is what actually happens for the
+// vast majority of these.
+async function fetchHtmlOnce(url, extraHeaders) {
   const hostname = new URL(url).hostname;
   await throttleHost(hostname);
   const { status, body } = await curlGet(url, { 'User-Agent': BOT_UA, ...extraHeaders });
+  return { status, body };
+}
 
-  if (status === 429 || status === 403) {
+export async function fetchHtml(url, extraHeaders = {}, { retries = 2 } = {}) {
+  let lastStatus;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const { status, body } = await fetchHtmlOnce(url, extraHeaders);
+    if (status >= 200 && status < 300) return body;
+    lastStatus = status;
+    if ((status === 429 || status === 403) && attempt < retries) {
+      await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+      continue;
+    }
+    break;
+  }
+
+  if (lastStatus === 429 || lastStatus === 403) {
     throw new UnresolvableError(
       'Источник временно ограничил доступ с сервера бота (слишком много запросов подряд). Обычно это снимается само через некоторое время — попробуй ещё раз чуть позже.'
     );
   }
-  if (status < 200 || status >= 300) {
-    throw new UnresolvableError(`Сервер вернул ошибку (HTTP ${status}) при открытии ссылки.`);
-  }
-  return body;
+  throw new UnresolvableError(`Сервер вернул ошибку (HTTP ${lastStatus}) при открытии ссылки.`);
 }
 
 // Some of these sites occasionally answer 200 with a stripped client-shell

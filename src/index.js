@@ -8,7 +8,7 @@ import { Client, GatewayIntentBits, Partials, MessageFlags } from 'discord.js';
 import { env } from './config/env.js';
 import './database/db.js';
 import { loadCommands } from './commandLoader.js';
-import { handleButton } from './interactions/buttonHandler.js';
+import { handleButton, handleModalSubmit } from './interactions/buttonHandler.js';
 import { voteManager } from './voting/VoteManager.js';
 import { audioManager } from './audio/AudioManager.js';
 import { loadPlatformEmojis } from './utils/platformEmojis.js';
@@ -56,6 +56,10 @@ client.on('interactionCreate', async (interaction) => {
     }
     if (interaction.isButton()) {
       await handleButton(interaction);
+      return;
+    }
+    if (interaction.isModalSubmit()) {
+      await handleModalSubmit(interaction);
       return;
     }
   } catch (err) {

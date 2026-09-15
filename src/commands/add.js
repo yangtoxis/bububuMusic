@@ -4,6 +4,7 @@ import { resolveTrackRequest, UnresolvableError } from '../library/TrackResolver
 import { detectPlaylistUrl } from '../library/PlaylistUrlResolver.js';
 import { runPlaylistUrlImport } from '../library/bulkImportFlow.js';
 import { PlaylistRepo } from '../database/PlaylistRepo.js';
+import { audioManager } from '../audio/AudioManager.js';
 import { trackAddedEmbed } from '../utils/embeds.js';
 import { undoAddRow } from '../utils/controls.js';
 import { createLogger } from '../utils/logger.js';
@@ -44,6 +45,12 @@ export async function execute(interaction) {
     logger.error('single track add failed', { error: err.message, query: trackQuery });
     return interaction.editReply({ content: `❌ Не удалось добавить трек: ${err.message}` });
   }
+
+  // A track added straight to the library is what the DJ presumably wants
+  // to hear next, not whenever shuffle happens to draw it - so if there's
+  // a live session in this guild, jump it to the front of the queue.
+  const session = audioManager.get(interaction.guild.id);
+  if (session) session.addToQueueFront(result.track);
 
   const embed = trackAddedEmbed(result.track, { alreadyInPlaylist: result.alreadyInPlaylist });
   const components = result.alreadyInPlaylist ? [] : undoAddRow(library.id, result.track.id);

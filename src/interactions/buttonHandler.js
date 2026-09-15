@@ -1,4 +1,4 @@
-import { MessageFlags } from 'discord.js';
+import { MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } from 'discord.js';
 import { requireDJ } from '../utils/djGuard.js';
 import { requireActiveSession } from '../utils/voiceGuards.js';
 import { trackAnnouncementEmbed, queueEmbed } from '../utils/embeds.js';
@@ -6,6 +6,8 @@ import { playerControlRows, queueShuffleRow } from '../utils/controls.js';
 import { stopHype } from '../audio/hypeControl.js';
 import { voteManager } from '../voting/VoteManager.js';
 import { removeTrackFromPlaylist, restoreTrackToPlaylist } from '../library/playlistOps.js';
+import { handleAdd } from '../commands/playlist.js';
+import { PlaylistRepo } from '../database/PlaylistRepo.js';
 
 const VOLUME_STEP = 10;
 
@@ -16,8 +18,38 @@ export async function handleButton(interaction) {
   if (namespace === 'vote') return handleVoteButton(interaction);
   if (namespace === 'track') return handleTrackButton(interaction);
   if (namespace === 'queue') return handleQueueButton(interaction);
+  if (namespace === 'padd') return handleAddPlaylistButton(interaction);
 
   return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
+}
+
+// Deliberately open to everyone (not DJ-gated) - in Микс mode, this is how
+// non-DJ members add themselves to the rotation via their own playlist.
+async function handleAddPlaylistButton(interaction) {
+  const modal = new ModalBuilder()
+    .setCustomId('padd:submit')
+    .setTitle('Добавить в свой плейлист')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('track')
+          .setLabel('Название, ссылка на трек или плейлист')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      )
+    );
+  return interaction.showModal(modal);
+}
+
+export async function handleModalSubmit(interaction) {
+  const [namespace] = interaction.customId.split(':');
+  if (namespace !== 'padd') {
+    return interaction.reply({ content: '❌ Неизвестное действие.', flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications });
+  }
+
+  const trackQuery = interaction.fields.getTextInputValue('track');
+  const personal = PlaylistRepo.getOrCreatePersonal(interaction.user.id);
+  return handleAdd(interaction, personal, trackQuery);
 }
 
 async function handleControlButton(interaction) {

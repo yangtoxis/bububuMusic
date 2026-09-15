@@ -51,7 +51,61 @@ export function detectPlaylistUrl(text) {
   return null;
 }
 
-async function resolveSpotifyPlaylist(url) {
+const SPOTIFY_ENTITY_RE = /open\.spotify\.com\/(?:intl-\w+\/)?(playlist|album)\/([a-zA-Z0-9]+)/i;
+
+// Spotify's own embeddable widget (the iframe you get from "Share > Embed
+// playlist") ships every track's title+artist directly in a __NEXT_DATA__
+// JSON blob on first load - one request for the whole playlist instead of
+// one og:meta fetch per track (the old approach below), which is both far
+// fewer requests and immune to any single track's page failing to load.
+// Confirmed against a real ~1000-track playlist that this widget itself
+// caps at under 100 entries with no offset/cursor exposed anywhere in the
+// response - there's no way to page past that from this endpoint. Below
+// that size (the overwhelming majority of real playlists) this returns the
+// complete list.
+async function resolveSpotifyPlaylistViaEmbed(url) {
+  const match = url.match(SPOTIFY_ENTITY_RE);
+  if (!match) throw new UnresolvableError('Не удалось распознать эту ссылку на Spotify.');
+  const [, type, id] = match;
+
+  const html = await fetchHtmlWithRetry(
+    `https://open.spotify.com/embed/${type}/${id}`,
+    (h) => h.includes('__NEXT_DATA__')
+  );
+  const dataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s);
+  if (!dataMatch) throw new UnresolvableError('Не удалось получить данные плейлиста Spotify.');
+
+  let data;
+  try {
+    data = JSON.parse(dataMatch[1]);
+  } catch {
+    throw new UnresolvableError('Не удалось разобрать данные плейлиста Spotify.');
+  }
+
+  const trackList = data?.props?.pageProps?.state?.data?.entity?.trackList;
+  if (!Array.isArray(trackList) || trackList.length === 0) {
+    throw new UnresolvableError('Не удалось найти треки в этом плейлисте/альбоме Spotify.');
+  }
+
+  if (trackList.length >= 95) {
+    logger.warn('spotify embed widget likely truncated a large playlist - no pagination available here', {
+      url,
+      count: trackList.length,
+    });
+  }
+
+  return trackList.slice(0, PLAYLIST_ITEM_LIMIT).map((t) => {
+    const title = decodeHtmlEntities(t.title || '').trim();
+    const artist = decodeHtmlEntities(t.subtitle || '').trim();
+    return { raw: artist ? `${artist} - ${title}` : title, artist, title };
+  });
+}
+
+// Old approach, kept as a fallback if Spotify ever changes the embed
+// widget's markup: scrape "music:song" meta tags off the regular playlist
+// page, then fetch each track's own page individually. Much slower (N+1
+// requests) and caps out far lower in practice.
+async function resolveSpotifyPlaylistViaOgMeta(url) {
   const html = await fetchHtmlWithRetry(url, (h) => h.includes('name="music:song"'));
   const trackUrls = [...html.matchAll(/name="music:song" content="(https:\/\/open\.spotify\.com\/track\/[a-zA-Z0-9]+)"/g)]
     .map((m) => m[1])
@@ -70,6 +124,15 @@ async function resolveSpotifyPlaylist(url) {
     }
   }
   return items;
+}
+
+async function resolveSpotifyPlaylist(url) {
+  try {
+    return await resolveSpotifyPlaylistViaEmbed(url);
+  } catch (err) {
+    logger.warn('spotify embed widget unavailable, falling back to og:meta scraping', { error: err.message, url });
+    return resolveSpotifyPlaylistViaOgMeta(url);
+  }
 }
 
 // Component extractors for the three Yandex Music URL shapes that reach

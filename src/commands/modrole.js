@@ -1,11 +1,14 @@
-import { SlashCommandBuilder, PermissionsBitField, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { ModRoleRepo } from '../database/ModRoleRepo.js';
 import { isGuildAdmin } from '../utils/modGuard.js';
 
+// Deliberately no .setDefaultMemberPermissions() - Discord would hide the
+// command entirely from anyone without that permission, including the
+// hardcoded super admin on a guild where they don't happen to have it.
+// Visible to everyone; isGuildAdmin() below is what actually gates it.
 export const data = new SlashCommandBuilder()
   .setName('modrole')
   .setDescription('Настроить роли модераторов для этого сервера')
-  .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild)
   .addSubcommand((sub) =>
     sub
       .setName('add')

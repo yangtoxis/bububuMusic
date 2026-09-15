@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import {
+  fetchHtml,
   fetchHtmlWithRetry,
   fetchOgMeta,
   fetchSoundCloudMeta,
@@ -54,17 +55,14 @@ export function detectPlaylistUrl(text) {
 
 const SPOTIFY_ENTITY_RE = /open\.spotify\.com\/(?:intl-\w+\/)?(playlist|album)\/([a-zA-Z0-9]+)/i;
 
-// Spotify's own embeddable widget (the iframe you get from "Share > Embed
-// playlist") ships every track's title+artist directly in a __NEXT_DATA__
-// JSON blob on first load - one request for the whole playlist instead of
-// one og:meta fetch per track (the old approach below), which is both far
-// fewer requests and immune to any single track's page failing to load.
-// Confirmed against a real ~1000-track playlist that this widget itself
-// caps at under 100 entries with no offset/cursor exposed anywhere in the
-// response - there's no way to page past that from this endpoint. Below
-// that size (the overwhelming majority of real playlists) this returns the
-// complete list.
-async function resolveSpotifyPlaylistViaEmbed(url) {
+// Fetches and parses the __NEXT_DATA__ blob off Spotify's own embeddable
+// widget page (the iframe you get from "Share > Embed"). It carries two
+// useful things at once: the entity's own preview data (trackList, capped
+// under ~100 - see resolveSpotifyPlaylistViaEmbed below) AND a short-lived
+// anonymous session token (props.pageProps.state.settings.session) that the
+// widget itself uses to talk to Spotify's real backend - which is what
+// unlocks genuine pagination below.
+async function fetchSpotifyEmbedData(url) {
   const match = url.match(SPOTIFY_ENTITY_RE);
   if (!match) throw new UnresolvableError('Не удалось распознать эту ссылку на Spotify.');
   const [, type, id] = match;
@@ -76,13 +74,97 @@ async function resolveSpotifyPlaylistViaEmbed(url) {
   const dataMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s);
   if (!dataMatch) throw new UnresolvableError('Не удалось получить данные плейлиста Spotify.');
 
-  let data;
   try {
-    data = JSON.parse(dataMatch[1]);
+    return { type, id, data: JSON.parse(dataMatch[1]) };
   } catch {
     throw new UnresolvableError('Не удалось разобрать данные плейлиста Spotify.');
   }
+}
 
+const PATHFINDER_URL = 'https://api-partner.spotify.com/pathfinder/v1/query';
+// The persisted-query sha256 Spotify's own web player currently sends for
+// its "fetchPlaylist" GraphQL operation. Spotify can rotate this hash
+// without notice - if it ever starts failing (PersistedQueryNotFound or
+// similar), this is the one line to update. Until then, the fallback chain
+// in resolveSpotifyPlaylist below means a rotation degrades gracefully to
+// the capped embed-widget method instead of breaking playlist import
+// outright.
+const FETCH_PLAYLIST_QUERY_HASH = 'a65e12194ed5fc443a1cdebed5fabe33ca5b07b987185d63c72483867ad13cb4';
+const PATHFINDER_PAGE_SIZE = 100;
+// Safety valve independent of PLAYLIST_ITEM_LIMIT - stops a malformed
+// response (e.g. totalCount never satisfied) from looping forever.
+const PATHFINDER_MAX_PAGES = 30;
+
+// The same GraphQL "Pathfinder" API Spotify's own web player calls for
+// everything - genuine offset/limit pagination, no size cap. Requires no
+// login: the anonymous token bootstrapped from the embed page (see
+// fetchSpotifyEmbedData) is enough, exactly like the widget itself uses.
+// Confirmed live against a real 690-track playlist that this returns every
+// track across 7 pages, where the embed widget's own preview data (below)
+// caps out under 100.
+async function resolveSpotifyPlaylistViaPathfinder(url) {
+  const { id, data } = await fetchSpotifyEmbedData(url);
+  const token = data?.props?.pageProps?.state?.settings?.session?.accessToken;
+  if (!token) throw new UnresolvableError('Не удалось получить анонимный токен Spotify.');
+
+  const items = [];
+  let offset = 0;
+  let total = Infinity;
+  let pages = 0;
+
+  while (offset < total && items.length < PLAYLIST_ITEM_LIMIT && pages < PATHFINDER_MAX_PAGES) {
+    const variables = JSON.stringify({
+      uri: `spotify:playlist:${id}`,
+      offset,
+      limit: PATHFINDER_PAGE_SIZE,
+      enableWatchFeedEntrypoint: false,
+    });
+    const extensions = JSON.stringify({ persistedQuery: { version: 1, sha256Hash: FETCH_PLAYLIST_QUERY_HASH } });
+    const qs = new URLSearchParams({ operationName: 'fetchPlaylist', variables, extensions });
+
+    const body = await fetchHtml(`${PATHFINDER_URL}?${qs}`, {
+      Authorization: `Bearer ${token}`,
+      'app-platform': 'WebPlayer',
+    });
+
+    let parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      throw new UnresolvableError('Не удалось разобрать ответ Spotify API.');
+    }
+    if (parsed.errors) {
+      throw new UnresolvableError(`Spotify API вернул ошибку: ${JSON.stringify(parsed.errors).slice(0, 200)}`);
+    }
+
+    const content = parsed?.data?.playlistV2?.content;
+    if (!content) throw new UnresolvableError('Не удалось найти треки в этом плейлисте Spotify.');
+
+    total = content.totalCount ?? content.items?.length ?? 0;
+    for (const entry of content.items || []) {
+      // Podcast episodes and locally-unavailable tracks land here without
+      // an identityTrait - skip rather than fail the whole import.
+      const trait = entry?.itemV3?.data?.identityTrait;
+      if (!trait?.name) continue;
+      const artist = (trait.contributors?.items || []).map((a) => a.name).filter(Boolean).join(', ');
+      items.push({ raw: artist ? `${artist} - ${trait.name}` : trait.name, artist, title: trait.name });
+    }
+
+    offset += PATHFINDER_PAGE_SIZE;
+    pages += 1;
+  }
+
+  if (items.length === 0) {
+    throw new UnresolvableError('Не удалось найти треки в этом плейлисте Spotify.');
+  }
+  return items.slice(0, PLAYLIST_ITEM_LIMIT);
+}
+
+// Tier-2 fallback if Pathfinder ever breaks (rotated hash, etc.): the
+// embed widget's own preview data, capped under ~100 entries with no way
+// to page past that from this endpoint.
+async function resolveSpotifyPlaylistViaEmbed(url) {
+  const { data } = await fetchSpotifyEmbedData(url);
   const trackList = data?.props?.pageProps?.state?.data?.entity?.trackList;
   if (!Array.isArray(trackList) || trackList.length === 0) {
     throw new UnresolvableError('Не удалось найти треки в этом плейлисте/альбоме Spotify.');
@@ -132,16 +214,25 @@ async function resolveSpotifyPlaylist(url) {
   const type = match?.[1];
   const id = match?.[2];
 
-  // Albums only: Client Credentials (no user login) still works for these
-  // via the real, properly paginated Web API - genuinely no size cap,
-  // unlike every other path here. Playlists specifically 403/401 on this
-  // token type since Spotify locked that down in Feb 2026, so they skip
-  // straight past this and go to the embed widget below.
+  // Albums: Client Credentials (no user login) still works for these via
+  // the real, properly paginated Web API - genuinely no size cap. Playlists
+  // 403/401 on this token type since Spotify locked that down in Feb 2026.
   if (type === 'album' && isSpotifyApiConfigured()) {
     try {
       return await fetchAlbumTracksViaApi(id, PLAYLIST_ITEM_LIMIT);
     } catch (err) {
       logger.warn('spotify web api unavailable for album, falling back to embed widget', { error: err.message, url });
+    }
+  }
+
+  // Playlists: the anonymous Pathfinder path (genuine pagination, no size
+  // cap) first, then the embed widget's capped preview data, then og:meta
+  // scraping - each tier only runs if the one before it throws.
+  if (type === 'playlist') {
+    try {
+      return await resolveSpotifyPlaylistViaPathfinder(url);
+    } catch (err) {
+      logger.warn('spotify pathfinder api unavailable, falling back to embed widget', { error: err.message, url });
     }
   }
 

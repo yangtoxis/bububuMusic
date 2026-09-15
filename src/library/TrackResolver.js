@@ -69,6 +69,9 @@ const MIN_HOST_INTERVAL_MS = {
   // through, silently dropping the rest of the tracks (each failed fetch
   // is caught and skipped, not surfaced as an overall import failure).
   'open.spotify.com': 1200,
+  // The real pathfinder GraphQL API a big playlist import pages through
+  // (PlaylistUrlResolver.js) - same conservative treatment as the host above.
+  'api-partner.spotify.com': 1200,
 };
 const DEFAULT_HOST_INTERVAL_MS = 500;
 

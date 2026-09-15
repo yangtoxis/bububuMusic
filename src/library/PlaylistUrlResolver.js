@@ -9,6 +9,7 @@ import {
   decodeHtmlEntities,
   UnresolvableError,
 } from './TrackResolver.js';
+import { splitArtistTitle } from './splitArtistTitle.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger({ module: 'PlaylistUrlResolver' });
@@ -23,6 +24,11 @@ const YANDEX_ALBUM_ONLY_RE = /music\.yandex\.(ru|com|by|kz|uz)\/album\/\d+\/?(?:
 // personal share link like "Мне нравится" (/playlists/<uuid>, no /users/).
 const YANDEX_PLAYLIST_RE = /music\.yandex\.(ru|com|by|kz|uz)\/(?:users\/[^/]+\/)?playlists\/[\w.-]+/i;
 const SOUNDCLOUD_SET_RE = /soundcloud\.com\/[^/?#]+\/sets\/[^/?#]+/i;
+// Only the explicit "/playlist?list=..." shape - a plain "watch?v=...&list=..."
+// link is a single video that happens to sit in some playlist, and stays a
+// single-track add (handled by TrackResolver.js) rather than surprising
+// someone by importing the whole thing.
+const YOUTUBE_PLAYLIST_RE = /(?:music\.)?youtube\.com\/playlist\?[^\s#]*\blist=[\w-]+/i;
 
 // Upper bound so one runaway link can't queue an unbounded background job
 // - well above any playlist size we actually expect to see in practice.
@@ -38,6 +44,9 @@ export function detectPlaylistUrl(text) {
   }
   if (SOUNDCLOUD_SET_RE.test(trimmed)) {
     return { platform: 'soundcloud', label: 'SoundCloud', url: trimmed };
+  }
+  if (YOUTUBE_PLAYLIST_RE.test(trimmed)) {
+    return { platform: 'youtube', label: 'YouTube', url: trimmed };
   }
   return null;
 }
@@ -256,6 +265,39 @@ async function resolveSoundCloudPlaylist(url) {
   return items;
 }
 
+// Unlike every other platform here, YouTube IS the actual download source -
+// so instead of turning each entry into an "Artist - Title" search query
+// (which would just make YtDlpResolver search YouTube again for a worse
+// match), `raw` is the real watch URL. TrackResolver.resolveTrackRequest
+// recognizes that immediately and downloads that exact video - no re-search
+// round-trip, and no risk of matching a different upload of the same song.
+async function resolveYoutubePlaylist(url) {
+  const stdout = await runYtDlpFlatPlaylist(url, 30_000);
+  const items = stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry) => entry?.title && (entry.webpage_url || entry.id))
+    .map((entry) => {
+      const videoUrl = entry.webpage_url || `https://www.youtube.com/watch?v=${entry.id}`;
+      const split = splitArtistTitle(entry.title);
+      return { raw: videoUrl, artist: split?.artist ?? '', title: split?.title ?? entry.title };
+    })
+    .slice(0, PLAYLIST_ITEM_LIMIT);
+
+  if (items.length === 0) {
+    throw new UnresolvableError('Не удалось найти видео в этом плейлисте YouTube.');
+  }
+  return items;
+}
+
 /**
  * Resolves a playlist/album URL into a list of { raw, artist, title } items
  * - the same shape parseTrackList.js produces for TXT lines - ready to feed
@@ -266,5 +308,6 @@ export async function resolvePlaylistUrlItems({ platform, url }) {
   if (platform === 'spotify') return resolveSpotifyPlaylist(url);
   if (platform === 'yandex') return resolveYandexPlaylist(url);
   if (platform === 'soundcloud') return resolveSoundCloudPlaylist(url);
+  if (platform === 'youtube') return resolveYoutubePlaylist(url);
   throw new UnresolvableError('Неизвестная платформа плейлиста.');
 }

@@ -34,6 +34,7 @@ async function handleAddPlaylistButton(interaction) {
         new TextInputBuilder()
           .setCustomId('track')
           .setLabel('Название, ссылка на трек или плейлист')
+          .setPlaceholder('YouTube, Spotify, Яндекс, SoundCloud. Другая площадка — к модератору')
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
       )

@@ -10,6 +10,7 @@ import {
   UnresolvableError,
 } from './TrackResolver.js';
 import { splitArtistTitle } from './splitArtistTitle.js';
+import { isSpotifyApiConfigured, fetchAlbumTracksViaApi } from './SpotifyApi.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger({ module: 'PlaylistUrlResolver' });
@@ -127,6 +128,23 @@ async function resolveSpotifyPlaylistViaOgMeta(url) {
 }
 
 async function resolveSpotifyPlaylist(url) {
+  const match = url.match(SPOTIFY_ENTITY_RE);
+  const type = match?.[1];
+  const id = match?.[2];
+
+  // Albums only: Client Credentials (no user login) still works for these
+  // via the real, properly paginated Web API - genuinely no size cap,
+  // unlike every other path here. Playlists specifically 403/401 on this
+  // token type since Spotify locked that down in Feb 2026, so they skip
+  // straight past this and go to the embed widget below.
+  if (type === 'album' && isSpotifyApiConfigured()) {
+    try {
+      return await fetchAlbumTracksViaApi(id, PLAYLIST_ITEM_LIMIT);
+    } catch (err) {
+      logger.warn('spotify web api unavailable for album, falling back to embed widget', { error: err.message, url });
+    }
+  }
+
   try {
     return await resolveSpotifyPlaylistViaEmbed(url);
   } catch (err) {

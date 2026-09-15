@@ -45,4 +45,13 @@ export const env = {
   // "access_token" value out of the resulting music.yandex.ru/#access_token=...
   // redirect URL.
   yandexMusicToken: process.env.YANDEX_MUSIC_TOKEN || null,
+
+  // Optional. A free app's Client Credentials (developer.spotify.com -> Create
+  // app -> Web API) lets PlaylistUrlResolver.js pull full, paginated album
+  // track lists via the real Spotify Web API. Note this does NOT help with
+  // playlists specifically - Spotify locked playlist track reads behind real
+  // user login in Feb 2026, so those still go through the embed-widget
+  // fallback (capped under ~100 tracks) regardless of these being set.
+  spotifyClientId: process.env.SPOTIFY_CLIENT_ID || null,
+  spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET || null,
 };
